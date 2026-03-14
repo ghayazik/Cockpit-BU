@@ -14,65 +14,31 @@
     ::-webkit-scrollbar-thumb:hover { background: #0ea5e9; }
     input::placeholder, textarea::placeholder { color: #4a5a74; }
     select option { background: #0c1220; color: #e8edf5; }
-    #loading-screen {
-      position: fixed; inset: 0; background: #05080f;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      font-family: 'DM Sans', system-ui, sans-serif; z-index: 9999;
-    }
-    #loading-screen .logo { width: 64px; height: 64px; border-radius: 18px;
-      background: linear-gradient(135deg, #0ea5e9, #06d6a0);
-      display: flex; align-items: center; justify-content: center;
-      font-size: 26px; font-weight: 900; color: #05080f; margin-bottom: 20px;
-      animation: pulse 1.5s ease-in-out infinite; }
+    #loading-screen { position: fixed; inset: 0; background: #05080f; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: 'DM Sans', system-ui, sans-serif; z-index: 9999; }
+    #loading-screen .logo { width: 64px; height: 64px; border-radius: 18px; background: linear-gradient(135deg, #0ea5e9, #06d6a0); display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 900; color: #05080f; margin-bottom: 20px; animation: pulse 1.5s ease-in-out infinite; }
     #loading-screen p { color: #7b8ba5; font-size: 13px; }
-    #loading-screen .err { color: #f43f5e; margin-top: 12px; font-size: 12px; max-width: 400px; text-align: center; }
     @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
   </style>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;600;700;800;900&family=IBM+Plex+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
-  <div id="loading-screen">
-    <div class="logo">BU</div>
-    <p id="loading-text">Chargement de l'application...</p>
-  </div>
+  <div id="loading-screen"><div class="logo">BU</div><p id="loading-text">Chargement...</p></div>
   <div id="root"></div>
-
-  <!-- FIREBASE CONFIG — Remplacez avec vos identifiants Firebase -->
   <script>
-    window.__FIREBASE_CONFIG__ = {
-      apiKey: "VOTRE_API_KEY",
-      authDomain: "VOTRE_PROJET.firebaseapp.com",
-      projectId: "VOTRE_PROJECT_ID",
-      storageBucket: "VOTRE_PROJET.appspot.com",
-      messagingSenderId: "VOTRE_SENDER_ID",
-      appId: "VOTRE_APP_ID"
-    };
+    window.__FIREBASE_CONFIG__ = { apiKey: "VOTRE_API_KEY", authDomain: "VOTRE_PROJET.firebaseapp.com", projectId: "VOTRE_PROJECT_ID", storageBucket: "VOTRE_PROJET.appspot.com", messagingSenderId: "VOTRE_SENDER_ID", appId: "VOTRE_APP_ID" };
   </script>
-
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
-
   <script>
-    // Ensure Recharts is available globally
-    if (!window.Recharts && typeof Recharts === 'undefined') {
-      // Try to find it on window
-      var rc = window.Recharts || window.recharts;
-      if (rc) window.Recharts = rc;
-    }
-    document.getElementById('loading-text').textContent = 'Compilation de l\'application...';
-    window.onerror = function(msg, url, line) {
-      var el = document.getElementById('loading-screen');
-      if (el) { el.innerHTML = '<div class="logo">BU</div><p style="color:#f43f5e">Erreur de chargement</p><div class="err">' + msg + ' (ligne ' + line + ')</div><p style="margin-top:16px;color:#7b8ba5;font-size:11px">Rechargez la page ou vérifiez la console.</p>'; }
-    };
+    document.getElementById('loading-text').textContent = 'Compilation...';
+    window.onerror = function(msg, url, line) { var el = document.getElementById('loading-screen'); if (el) el.innerHTML = '<div class="logo">BU</div><p style="color:#f43f5e">Erreur</p><div style="color:#7b8ba5;font-size:12px;max-width:400px;text-align:center;margin-top:8px">' + msg + ' (L' + line + ')</div>'; };
   </script>
-
   <script type="text/babel">
     const { useState, useCallback, useRef, useEffect, useMemo } = React;
-    // Recharts CDN exposes all components on window.Recharts
     const _RC = window.Recharts || {};
     const { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ComposedChart, ReferenceLine } = _RC;
 
@@ -1472,6 +1438,226 @@ const tdStyle = { padding: "3px 3px", verticalAlign: "top" };
 const cellInputStyle = { width: "100%", boxSizing: "border-box", background: C.bg, border: "1px solid transparent", borderRadius: 6, padding: "6px 8px", color: C.text, fontSize: 12, fontFamily: mono, outline: "none", transition: "all 0.15s", textAlign: "right" };
 
 /* ═══════════════════ MAIN APP ═══════════════════ */
+/* ═══════════════════ GUIDE UTILISATEUR ═══════════════════ */
+function GuideModal({ onClose }) {
+  const [activeTab, setActiveTab] = useState("financier");
+  const guideTabs = [
+    { id: "financier", label: "💰 Financière", color: C.primary },
+    { id: "operationnel", label: "⚙️ Opérationnelle", color: C.accent },
+    { id: "rh", label: "👥 RH", color: C.warn },
+    { id: "gouvernance", label: "🏛 Gouvernance", color: "#8b5cf6" },
+    { id: "general", label: "📖 Général", color: C.text2 },
+  ];
+
+  const Tbl = ({ headers, rows }) => (
+    <div style={{ overflowX: "auto", marginTop: 12, marginBottom: 16 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 500 }}>
+        <thead><tr>{headers.map(h => <th key={h} style={{ padding: "8px 12px", textAlign: "left", color: C.primary2, fontSize: 10, fontWeight: 700, borderBottom: `2px solid ${C.border}`, background: C.bg, textTransform: "uppercase", letterSpacing: 0.5 }}>{h}</th>)}</tr></thead>
+        <tbody>{rows.map((row, i) => <tr key={i} style={{ background: i % 2 ? C.bg + "60" : "transparent" }}>{row.map((cell, j) => <td key={j} style={{ padding: "7px 12px", color: j === 0 ? C.text : C.text2, fontSize: 12, fontFamily: j === 0 ? font : mono, borderBottom: `1px solid ${C.border}22`, fontWeight: j === 0 ? 600 : 400 }}>{cell}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
+  );
+
+  const Section = ({ title, children }) => (
+    <div style={{ marginBottom: 20 }}>
+      <h4 style={{ color: C.text, fontSize: 13, fontWeight: 800, margin: "0 0 8px", display: "flex", alignItems: "center", gap: 6 }}>{title}</h4>
+      <div style={{ color: C.text2, fontSize: 12, lineHeight: 1.7 }}>{children}</div>
+    </div>
+  );
+
+  const Tag = ({ children, color = C.primary }) => (
+    <span style={{ display: "inline-block", background: color + "18", color, fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 4, fontFamily: mono, margin: "0 3px" }}>{children}</span>
+  );
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 20, width: 850, maxHeight: "90vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
+        {/* Header */}
+        <div style={{ padding: "20px 28px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+          <div>
+            <h2 style={{ color: C.text, fontSize: 18, fontWeight: 900, margin: 0 }}>📖 Guide utilisateur — Format des données</h2>
+            <p style={{ color: C.text3, fontSize: 11, margin: "4px 0 0" }}>Nomenclature recommandée pour chaque rubrique du dashboard</p>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: C.text3, fontSize: 22, cursor: "pointer" }}>✕</button>
+        </div>
+
+        {/* Tab bar */}
+        <div style={{ display: "flex", gap: 4, padding: "12px 28px", borderBottom: `1px solid ${C.border}`, flexShrink: 0, overflowX: "auto" }}>
+          {guideTabs.map(t => (
+            <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
+              padding: "7px 14px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700,
+              background: activeTab === t.id ? t.color + "20" : "transparent",
+              color: activeTab === t.id ? t.color : C.text3,
+              fontFamily: font, transition: "all 0.2s", whiteSpace: "nowrap",
+            }}>{t.label}</button>
+          ))}
+        </div>
+
+        {/* Content */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "20px 28px" }}>
+
+          {activeTab === "general" && <>
+            <Section title="📌 Règles générales">
+              La première ligne de chaque feuille Excel ou fichier CSV doit contenir les <strong style={{ color: C.text }}>en-têtes de colonnes</strong>. Le système détecte automatiquement la catégorie en analysant les noms de colonnes et le nom de la feuille.
+            </Section>
+            <Section title="📂 Formats acceptés">
+              <Tag color={C.accent}>.xlsx</Tag> <Tag color={C.accent}>.xls</Tag> <Tag color={C.accent}>.csv</Tag> <Tag color={C.accent}>.tsv</Tag>
+              {" "}— Plusieurs fichiers et feuilles peuvent être importés simultanément.
+            </Section>
+            <Section title="🔄 Détection automatique">
+              Le système analyse les noms des colonnes pour catégoriser automatiquement chaque feuille. Si la détection échoue, utilisez le bouton <strong style={{ color: C.primary2 }}>📁 Gérer fichiers</strong> pour assigner manuellement la feuille à une vision.
+            </Section>
+            <Section title="💡 Bonnes pratiques">
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
+                <div>• Nommez vos feuilles Excel avec des noms explicites : <Tag>Financier</Tag> <Tag>RH</Tag> <Tag>Opérations</Tag></div>
+                <div>• Utilisez des en-têtes courts sans accents si possible</div>
+                <div>• Les colonnes numériques doivent contenir uniquement des chiffres (pas de "MAD" ou "%")</div>
+                <div>• Mettez les unités dans le nom de la colonne : <Tag>ca_reel_mad</Tag> <Tag>sla_pourcent</Tag></div>
+                <div>• Une ligne = une période (mois) ou une entité (département, domaine)</div>
+              </div>
+            </Section>
+            <Section title="📁 Données non catégorisées">
+              Toute feuille qui ne correspond à aucune rubrique apparaît dans l'onglet <strong style={{ color: C.warn }}>📁 Autre</strong> avec un dashboard auto-généré et une suggestion d'analyse IA.
+            </Section>
+          </>}
+
+          {activeTab === "financier" && <>
+            <Section title="💰 Vision Financière — Structure recommandée">
+              Données mensuelles de suivi financier. Nommez la feuille <Tag>Financier</Tag> ou <Tag>Finance</Tag>.
+            </Section>
+            <Section title="Colonnes recommandées">
+              <Tbl headers={["Colonne", "Type", "Description", "Exemple"]} rows={[
+                ["mois", "Texte", "Période mensuelle", "Jan-25, Fév-25..."],
+                ["ca_reel", "Nombre", "Chiffre d'affaires réalisé (MAD)", "950000"],
+                ["ca_budget", "Nombre", "CA budgété prévu", "900000"],
+                ["charges_personnel", "Nombre", "Charges salariales", "450000"],
+                ["charges_infra", "Nombre", "Charges infrastructure", "120000"],
+                ["charges_soustraitance", "Nombre", "Coûts sous-traitance", "150000"],
+                ["marge_projet", "Nombre", "Marge brute par projet", "280000"],
+                ["backlog", "Nombre", "Carnet de commandes restant", "2500000"],
+                ["tresorerie", "Nombre", "Position de trésorerie", "1800000"],
+                ["ebitda", "Nombre", "EBITDA mensuel", "180000"],
+                ["dso_jours", "Nombre", "Délai moyen de paiement (jours)", "52"],
+              ]} />
+            </Section>
+            <Section title="🔍 Mots-clés détectés automatiquement">
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                {["ca","chiffre","revenue","budget","marge","charge","tresorerie","invest","cout","montant","depense","ebitda","backlog","dso","factur"].map(k => <Tag key={k} color={C.primary}>{k}</Tag>)}
+              </div>
+            </Section>
+            <Section title="📋 Exemple de fichier">
+              <Tbl headers={["mois", "ca_reel", "ca_budget", "marge_projet", "backlog", "dso_jours"]} rows={[
+                ["Jan-25", "980 000", "950 000", "290 000", "2 400 000", "48"],
+                ["Fév-25", "1 020 000", "960 000", "310 000", "2 350 000", "45"],
+                ["Mar-25", "995 000", "970 000", "285 000", "2 500 000", "52"],
+              ]} />
+            </Section>
+          </>}
+
+          {activeTab === "operationnel" && <>
+            <Section title="⚙️ Vision Opérationnelle — Structure recommandée">
+              Données mensuelles de performance opérationnelle. Nommez la feuille <Tag>Opérationnel</Tag> ou <Tag>Operations</Tag>.
+            </Section>
+            <Section title="Colonnes recommandées">
+              <Tbl headers={["Colonne", "Type", "Description", "Exemple"]} rows={[
+                ["mois", "Texte", "Période mensuelle", "Jan-25"],
+                ["taux_occupation", "Nombre", "Taux d'occupation des ressources (%)", "82"],
+                ["projets_actifs", "Nombre", "Nombre de projets en cours", "15"],
+                ["projets_livres", "Nombre", "Projets livrés dans le mois", "3"],
+                ["taux_livraison_delai", "Nombre", "% de livraisons dans les délais", "85"],
+                ["tjm_moyen", "Nombre", "Taux journalier moyen (MAD)", "950"],
+                ["satisfaction_client", "Nombre", "Score CSAT (/5)", "4.2"],
+                ["incidents_production", "Nombre", "Nombre d'incidents", "5"],
+                ["sla_respect", "Nombre", "Taux de respect SLA (%)", "92"],
+                ["tickets_resolus", "Nombre", "Tickets résolus dans le mois", "120"],
+                ["dette_technique", "Nombre", "Taux de dette technique (%)", "18"],
+              ]} />
+            </Section>
+            <Section title="🔍 Mots-clés détectés automatiquement">
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                {["projet","livraison","sla","incident","satisfaction","client","delai","production","taux","occupation","tjm","ticket","dette","sprint"].map(k => <Tag key={k} color={C.accent}>{k}</Tag>)}
+              </div>
+            </Section>
+            <Section title="📋 Exemple de fichier">
+              <Tbl headers={["mois", "taux_occupation", "projets_actifs", "sla_respect", "incidents_production", "tjm_moyen"]} rows={[
+                ["Jan-25", "82", "14", "91", "3", "920"],
+                ["Fév-25", "85", "16", "93", "2", "950"],
+                ["Mar-25", "79", "13", "88", "6", "900"],
+              ]} />
+            </Section>
+          </>}
+
+          {activeTab === "rh" && <>
+            <Section title="👥 Vision RH — Structure recommandée">
+              Données par département. Nommez la feuille <Tag>RH</Tag> ou <Tag>Ressources Humaines</Tag>.
+            </Section>
+            <Section title="Colonnes recommandées">
+              <Tbl headers={["Colonne", "Type", "Description", "Exemple"]} rows={[
+                ["departement", "Texte", "Nom du département / équipe", "Développement"],
+                ["effectif", "Nombre", "Nombre de collaborateurs", "28"],
+                ["taux_occupation", "Nombre", "Taux d'occupation (%)", "82"],
+                ["turnover", "Nombre", "Taux de turnover annuel (%)", "9"],
+                ["formation_h", "Nombre", "Heures de formation cumulées", "140"],
+                ["satisfaction", "Nombre", "Score satisfaction interne (/5)", "4.0"],
+                ["absenteisme", "Nombre", "Taux d'absentéisme (%)", "3.1"],
+                ["seniorite_moy", "Nombre", "Ancienneté moyenne (années)", "3.2"],
+                ["certifications", "Nombre", "Nombre de certifications actives", "12"],
+              ]} />
+            </Section>
+            <Section title="🔍 Mots-clés détectés automatiquement">
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                {["effectif","employe","turnover","formation","absenteisme","salaire","departement","recrutement","competence","certification","seniorite"].map(k => <Tag key={k} color={C.warn}>{k}</Tag>)}
+              </div>
+            </Section>
+            <Section title="📋 Exemple de fichier">
+              <Tbl headers={["departement", "effectif", "taux_occupation", "turnover", "satisfaction", "certifications"]} rows={[
+                ["Développement", "28", "82", "9", "4.0", "12"],
+                ["Infrastructure", "14", "88", "5", "4.3", "18"],
+                ["Data & IA", "10", "91", "12", "4.1", "8"],
+              ]} />
+            </Section>
+          </>}
+
+          {activeTab === "gouvernance" && <>
+            <Section title="🏛 Vision Gouvernance — Structure recommandée">
+              Données par domaine de conformité / risque. Nommez la feuille <Tag>Gouvernance</Tag> ou <Tag>Risques</Tag>.
+            </Section>
+            <Section title="Colonnes recommandées">
+              <Tbl headers={["Colonne", "Type", "Description", "Exemple"]} rows={[
+                ["domaine", "Texte", "Domaine de gouvernance", "Sécurité SI"],
+                ["score", "Nombre", "Score de conformité (/100)", "71"],
+                ["risque", "Texte", "Niveau de risque", "Élevé / Moyen / Faible"],
+                ["actions_ouvertes", "Nombre", "Actions correctives en cours", "9"],
+                ["actions_fermees", "Nombre", "Actions clôturées", "14"],
+                ["echeance", "Texte", "Échéance prévue", "Q1 2026"],
+                ["responsable", "Texte", "Responsable du domaine", "RSSI"],
+              ]} />
+            </Section>
+            <Section title="🔍 Mots-clés détectés automatiquement">
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                {["conformite","risque","audit","rgpd","securite","gouvernance","reglementaire","action","score","rse","pca","pra","itil"].map(k => <Tag key={k} color="#8b5cf6">{k}</Tag>)}
+              </div>
+            </Section>
+            <Section title="📋 Exemple de fichier">
+              <Tbl headers={["domaine", "score", "risque", "actions_ouvertes", "actions_fermees", "responsable"]} rows={[
+                ["Sécurité SI", "71", "Élevé", "9", "14", "RSSI"],
+                ["RGPD", "84", "Moyen", "3", "11", "DPO"],
+                ["Audit interne", "62", "Élevé", "11", "6", "Audit"],
+              ]} />
+            </Section>
+          </>}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: "14px 28px", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+          <span style={{ color: C.text3, fontSize: 11 }}>Astuce : vous pouvez toujours assigner manuellement via 📁 Gérer fichiers</span>
+          <Btn variant="secondary" onClick={onClose}>Fermer</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [page, setPage] = useState("dashboard");
@@ -1484,24 +1670,79 @@ function App() {
   const [showDataEntry, setShowDataEntry] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [dbReady, setDbReady] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
   const [importStatus, setImportStatus] = useState(null);
   const [demoMode, setDemoMode] = useState(true);
   const [rawSheets, setRawSheets] = useState({}); // all imported sheets raw
   const [sheetAssign, setSheetAssign] = useState({}); // manual sheet -> vision mapping
+  const [colConfig, setColConfig] = useState({}); // { sheetName: { origCol: { rename, type, desc } } }
+  const [expandedSheet, setExpandedSheet] = useState(null); // which sheet has column editor open
   const [showImportPanel, setShowImportPanel] = useState(false);
   const fileInputRef = useRef();
 
+  // Auto-detect column types
+  const detectColType = (rows, col) => {
+    const vals = rows.map(r => r[col]).filter(v => v !== "" && v !== null && v !== undefined);
+    if (vals.length === 0) return "texte";
+    const nums = vals.filter(v => typeof v === "number" || (!isNaN(parseFloat(v)) && isFinite(v)));
+    if (nums.length > vals.length * 0.6) return "nombre";
+    // Check if dates
+    const datePatterns = vals.filter(v => /\d{2,4}[-/.]\d{1,2}[-/.]\d{1,4}|jan|fev|mar|avr|mai|jun|jul|aou|sep|oct|nov|dec/i.test(String(v)));
+    if (datePatterns.length > vals.length * 0.5) return "date";
+    const unique = new Set(vals.map(v => String(v).toLowerCase()));
+    if (unique.size <= 5 && vals.length > 5) return "catégorie";
+    return "texte";
+  };
+
+  // Initialize column config for a sheet
+  const initColConfig = (sheetName, rows) => {
+    if (colConfig[sheetName]) return colConfig[sheetName];
+    const cols = rows.length > 0 ? Object.keys(rows[0]) : [];
+    const cfg = {};
+    cols.forEach(c => {
+      cfg[c] = { rename: c, type: detectColType(rows, c), desc: "" };
+    });
+    return cfg;
+  };
+
+  // Update a single column config
+  const updateColConfig = (sheetName, origCol, field, value) => {
+    setColConfig(prev => ({
+      ...prev,
+      [sheetName]: { ...(prev[sheetName] || {}), [origCol]: { ...(prev[sheetName]?.[origCol] || {}), [field]: value } }
+    }));
+  };
+
+  // Apply column renames to sheet data
+  const applyColRenames = (sheetName, rows) => {
+    const cfg = colConfig[sheetName];
+    if (!cfg) return rows;
+    return rows.map(row => {
+      const newRow = {};
+      Object.entries(row).forEach(([k, v]) => {
+        const renamed = cfg[k]?.rename || k;
+        newRow[renamed] = v;
+      });
+      return newRow;
+    });
+  };
+
   // Build dashboard data from raw sheets + assignments
   const buildDataFromSheets = useCallback((sheets, assignments) => {
+    // Apply column renames
+    const renamedSheets = {};
+    Object.entries(sheets).forEach(([sn, rows]) => {
+      renamedSheets[sn] = applyColRenames(sn, rows);
+    });
+
     const result = { financier_n: null, financier_n1: null, operationnel_n: null, operationnel_n1: null, rh: null, gouvernance: null, autre: {} };
     const assignedSheets = new Set();
     
-    // First: auto-categorize
-    const cat = categorize(sheets);
+    // First: auto-categorize (using renamed columns)
+    const cat = categorize(renamedSheets);
     const autoAssigned = new Set();
     Object.entries(cat).forEach(([catName, rows]) => {
-      // Find which sheet(s) contributed to this category
-      Object.entries(sheets).forEach(([sn, sr]) => {
+      Object.entries(renamedSheets).forEach(([sn, sr]) => {
         if (sr === rows || (sr.length > 0 && rows.length > 0 && sr[0] === rows[0])) autoAssigned.add(sn);
       });
     });
@@ -1512,13 +1753,13 @@ function App() {
     
     // Second: apply manual assignments (override auto)
     Object.entries(assignments).forEach(([sheetName, vision]) => {
-      if (vision && vision !== "auto" && vision !== "" && sheets[sheetName]) {
+      if (vision && vision !== "auto" && vision !== "" && renamedSheets[sheetName]) {
         assignedSheets.add(sheetName);
         if (vision === "autre") {
-          result.autre[sheetName] = sheets[sheetName];
+          result.autre[sheetName] = renamedSheets[sheetName];
         } else {
           const key = vision === "rh" ? "rh" : vision === "gouvernance" ? "gouvernance" : vision + "_n";
-          result[key] = sheets[sheetName];
+          result[key] = renamedSheets[sheetName];
         }
       } else if (vision === "auto") {
         assignedSheets.add(sheetName);
@@ -1526,7 +1767,7 @@ function App() {
     });
     
     // Collect uncategorized sheets into "autre"
-    Object.entries(sheets).forEach(([sn, rows]) => {
+    Object.entries(renamedSheets).forEach(([sn, rows]) => {
       if (!assignedSheets.has(sn) && !autoAssigned.has(sn) && rows.length > 0) {
         result.autre[sn] = rows;
       }
@@ -1733,6 +1974,7 @@ function App() {
             <Btn variant={showAI ? "danger" : "secondary"} onClick={() => setShowAI(!showAI)} small>🤖 {showAI ? "Fermer" : "IA"}</Btn>
           </>}
           <Btn variant="secondary" onClick={() => setShowDataEntry(true)} small>📝 Saisie</Btn>
+          <Btn variant="secondary" onClick={() => setShowGuide(true)} small>📖 Guide</Btn>
           {isAdmin && <Btn variant="secondary" onClick={() => setShowAdmin(true)} small>⚙️ Admin</Btn>}
 
           {/* User menu */}
@@ -1798,6 +2040,7 @@ function App() {
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8, width: "100%", maxWidth: 500 }}>
             <Btn onClick={() => fileInputRef.current?.click()} style={{ width: "100%", padding: "16px", borderRadius: 12, fontSize: 15 }}>📂 Importer mes fichiers Excel / CSV</Btn>
+            <Btn variant="secondary" onClick={() => setShowGuide(true)} style={{ width: "100%", padding: "12px", borderRadius: 10 }}>📖 Guide : format des données recommandé</Btn>
             {demoMode ? (
               <Btn variant="secondary" onClick={loadDemo} style={{ width: "100%", padding: "14px", borderRadius: 10 }}>Tester avec données démo</Btn>
             ) : (
@@ -1855,6 +2098,7 @@ function App() {
       {showPwModal && <PasswordModal user={currentUser} onClose={() => setShowPwModal(false)} onSave={handlePasswordChange} />}
       {showAdmin && <AdminPanel currentUser={currentUser} onClose={() => setShowAdmin(false)} onUsersChange={(u) => { const me = u.find(x=>x.id===currentUser.id); if(me) setCurrentUser(me); }} />}
       {showDataEntry && <DataEntryPanel currentUser={currentUser} onClose={() => setShowDataEntry(false)} />}
+      {showGuide && <GuideModal onClose={() => setShowGuide(false)} />}
 
       {/* ── IMPORT PANEL ── */}
       {showImportPanel && Object.keys(rawSheets).length > 0 && (
@@ -1895,20 +2139,25 @@ function App() {
                   return best;
                 })();
                 const assigned = sheetAssign[name] || (autoVision ? "auto" : "");
+                const sheetCfg = colConfig[name] || initColConfig(name, rows);
+                const isExpanded = expandedSheet === name;
 
                 return (
-                  <div key={name} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: "16px 20px", marginBottom: 12 }}>
+                  <div key={name} style={{ background: C.card, border: `1px solid ${isExpanded ? C.primary + "40" : C.border}`, borderRadius: 14, padding: "16px 20px", marginBottom: 12, transition: "border-color 0.2s" }}>
+                    {/* Header row */}
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                       <div>
                         <div style={{ color: C.text, fontSize: 14, fontWeight: 700 }}>{name}</div>
                         <div style={{ color: C.text3, fontSize: 11, marginTop: 2 }}>{rows.length} lignes · {cols.length} colonnes</div>
                       </div>
                       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <select
-                          value={assigned}
-                          onChange={e => handleSheetAssign(name, e.target.value)}
-                          style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", color: C.text, fontSize: 12, outline: "none", fontFamily: font, minWidth: 180 }}
-                        >
+                        <button onClick={() => setExpandedSheet(isExpanded ? null : name)} style={{
+                          background: isExpanded ? C.primaryDim : C.bg, border: `1px solid ${isExpanded ? C.primary + "40" : C.border}`,
+                          borderRadius: 8, padding: "7px 12px", color: isExpanded ? C.primary2 : C.text3, fontSize: 11, fontWeight: 600,
+                          cursor: "pointer", fontFamily: font, display: "flex", alignItems: "center", gap: 4,
+                        }}>✏️ Colonnes</button>
+                        <select value={assigned} onChange={e => handleSheetAssign(name, e.target.value)}
+                          style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", color: C.text, fontSize: 12, outline: "none", fontFamily: font, minWidth: 180 }}>
                           <option value="">— Non assigné —</option>
                           <option value="auto">🔄 Auto-détecté{autoVision ? ` (${VISION_LABELS[autoVision]})` : ""}</option>
                           <option value="financier">💰 Financière</option>
@@ -1920,15 +2169,77 @@ function App() {
                         <Btn variant="danger" small onClick={() => deleteImportedSheet(name)}>🗑</Btn>
                       </div>
                     </div>
-                    <div style={{ color: C.text3, fontSize: 10, marginBottom: 6 }}>Colonnes : {cols.slice(0, 8).join(" · ")}{cols.length > 8 ? ` (+${cols.length - 8})` : ""}</div>
-                    {rows.length > 0 && (
-                      <div style={{ overflowX: "auto", maxHeight: 120 }}>
+
+                    {/* Column editor — expanded */}
+                    {isExpanded && (
+                      <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 10, padding: 14, marginBottom: 12 }}>
+                        <div style={{ color: C.primary2, fontSize: 11, fontWeight: 700, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+                          ✏️ Configuration des colonnes
+                          <span style={{ color: C.text3, fontWeight: 400 }}>— Renommez pour améliorer la détection automatique</span>
+                        </div>
+                        <div style={{ overflowX: "auto" }}>
+                          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 600 }}>
+                            <thead>
+                              <tr>
+                                <th style={{ padding: "6px 8px", textAlign: "left", color: C.text3, fontSize: 9, fontWeight: 700, borderBottom: `1px solid ${C.border}`, width: 140 }}>COLONNE ORIGINALE</th>
+                                <th style={{ padding: "6px 8px", textAlign: "left", color: C.primary2, fontSize: 9, fontWeight: 700, borderBottom: `1px solid ${C.border}`, width: 160 }}>RENOMMER EN</th>
+                                <th style={{ padding: "6px 8px", textAlign: "left", color: C.accent, fontSize: 9, fontWeight: 700, borderBottom: `1px solid ${C.border}`, width: 100 }}>TYPE</th>
+                                <th style={{ padding: "6px 8px", textAlign: "left", color: C.text3, fontSize: 9, fontWeight: 700, borderBottom: `1px solid ${C.border}` }}>DESCRIPTION</th>
+                                <th style={{ padding: "6px 8px", textAlign: "left", color: C.text3, fontSize: 9, fontWeight: 700, borderBottom: `1px solid ${C.border}`, width: 100 }}>APERÇU</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {cols.map(c => {
+                                const cfg = sheetCfg[c] || { rename: c, type: detectColType(rows, c), desc: "" };
+                                const sample = rows.slice(0, 2).map(r => String(r[c] ?? "")).join(", ");
+                                return (
+                                  <tr key={c}>
+                                    <td style={{ padding: "5px 8px", color: C.text3, fontSize: 11, fontFamily: mono, borderBottom: `1px solid ${C.border}15` }}>{c}</td>
+                                    <td style={{ padding: "4px 6px", borderBottom: `1px solid ${C.border}15` }}>
+                                      <input value={cfg.rename} onChange={e => updateColConfig(name, c, "rename", e.target.value)}
+                                        style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, padding: "5px 8px", color: C.text, fontSize: 11, fontFamily: mono, outline: "none" }}
+                                        onFocus={e => e.target.style.borderColor = C.primary} onBlur={e => e.target.style.borderColor = C.border} />
+                                    </td>
+                                    <td style={{ padding: "4px 6px", borderBottom: `1px solid ${C.border}15` }}>
+                                      <select value={cfg.type} onChange={e => updateColConfig(name, c, "type", e.target.value)}
+                                        style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, padding: "5px 8px", color: C.text, fontSize: 11, outline: "none", fontFamily: font }}>
+                                        <option value="nombre">🔢 Nombre</option>
+                                        <option value="texte">🔤 Texte</option>
+                                        <option value="date">📅 Date</option>
+                                        <option value="catégorie">🏷 Catégorie</option>
+                                        <option value="pourcentage">📊 Pourcentage</option>
+                                        <option value="monétaire">💰 Monétaire</option>
+                                      </select>
+                                    </td>
+                                    <td style={{ padding: "4px 6px", borderBottom: `1px solid ${C.border}15` }}>
+                                      <input value={cfg.desc} onChange={e => updateColConfig(name, c, "desc", e.target.value)} placeholder="Description..."
+                                        style={{ width: "100%", background: C.card, border: `1px solid ${C.border}`, borderRadius: 6, padding: "5px 8px", color: C.text2, fontSize: 11, outline: "none", fontFamily: font }}
+                                        onFocus={e => e.target.style.borderColor = C.primary} onBlur={e => e.target.style.borderColor = C.border} />
+                                    </td>
+                                    <td style={{ padding: "5px 8px", color: C.text3, fontSize: 10, fontFamily: mono, borderBottom: `1px solid ${C.border}15`, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 100 }}>{sample}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ color: C.text3, fontSize: 10 }}>💡 Renommez les colonnes avec les mots-clés du guide pour améliorer la catégorisation auto</span>
+                          <Btn small onClick={() => setExpandedSheet(null)}>✓ OK</Btn>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Preview table */}
+                    {!isExpanded && <div style={{ color: C.text3, fontSize: 10, marginBottom: 6 }}>Colonnes : {cols.slice(0, 8).map(c => colConfig[name]?.[c]?.rename || c).join(" · ")}{cols.length > 8 ? ` (+${cols.length - 8})` : ""}</div>}
+                    {!isExpanded && rows.length > 0 && (
+                      <div style={{ overflowX: "auto", maxHeight: 100 }}>
                         <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 400 }}>
                           <thead>
-                            <tr>{cols.slice(0, 6).map(c => <th key={c} style={{ padding: "4px 8px", textAlign: "left", color: C.primary2, fontSize: 9, fontWeight: 700, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{c}</th>)}</tr>
+                            <tr>{cols.slice(0, 6).map(c => <th key={c} style={{ padding: "4px 8px", textAlign: "left", color: C.primary2, fontSize: 9, fontWeight: 700, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{colConfig[name]?.[c]?.rename || c}</th>)}</tr>
                           </thead>
                           <tbody>
-                            {rows.slice(0, 3).map((row, i) => (
+                            {rows.slice(0, 2).map((row, i) => (
                               <tr key={i}>{cols.slice(0, 6).map(c => <td key={c} style={{ padding: "3px 8px", color: C.text, fontSize: 10, fontFamily: mono, borderBottom: `1px solid ${C.border}11`, whiteSpace: "nowrap" }}>{String(row[c] ?? "").slice(0, 30)}</td>)}</tr>
                             ))}
                           </tbody>
