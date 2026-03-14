@@ -1,0 +1,1926 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cockpit Directeur BU — IT / Digital / Transformation</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #05080f; overflow-x: hidden; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0c1220; }
+    ::-webkit-scrollbar-thumb { background: #1c2d45; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #0ea5e9; }
+    input::placeholder, textarea::placeholder { color: #4a5a74; }
+    select option { background: #0c1220; color: #e8edf5; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+  <!-- FIREBASE CONFIG — Remplacez avec vos identifiants Firebase -->
+  <script>
+    window.__FIREBASE_CONFIG__ = {
+      apiKey: "VOTRE_API_KEY",
+      authDomain: "VOTRE_PROJET.firebaseapp.com",
+      projectId: "VOTRE_PROJECT_ID",
+      storageBucket: "VOTRE_PROJET.appspot.com",
+      messagingSenderId: "VOTRE_SENDER_ID",
+      appId: "VOTRE_APP_ID"
+    };
+  </script>
+
+  <script type="text/babel" data-type="module">
+    const { useState, useCallback, useRef, useEffect, useMemo } = React;
+    const { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ComposedChart, ReferenceLine } = Recharts;
+
+async function parseFileToSheets(file) {
+  const name = file.name.toLowerCase();
+  
+  // CSV / TSV
+  if (name.endsWith(".csv") || name.endsWith(".tsv")) {
+    const text = await file.text();
+    const firstLine = text.split("\n")[0] || "";
+    const tabCount = (firstLine.match(/\t/g) || []).length;
+    const semiCount = (firstLine.match(/;/g) || []).length;
+    let delimiter = undefined; // auto-detect
+    if (tabCount > 2) delimiter = "\t";
+    else if (semiCount > 2) delimiter = ";";
+    
+    return new Promise((resolve) => {
+      Papa.parse(text, {
+        header: true, skipEmptyLines: true, dynamicTyping: true, delimiter,
+        complete: (r) => {
+          const key = file.name.replace(/\.[^.]+$/, "").toLowerCase().replace(/\s+/g, "_");
+          resolve(r.data?.length > 0 ? { [key]: r.data } : {});
+        },
+        error: () => resolve({}),
+      });
+    });
+  }
+  
+  // XLSX / XLS - parse via arrayBuffer
+  const ab = await file.arrayBuffer();
+  const bytes = new Uint8Array(ab);
+  
+  // Check if it's a ZIP (XLSX = ZIP with XML inside)
+  if (bytes[0] === 0x50 && bytes[1] === 0x4B) {
+    // It's a valid XLSX ZIP file — try to extract sheet data
+    // Use a lightweight approach: convert to CSV-like via shared strings + sheet XML
+    try {
+      const sheets = await parseXLSXFromZip(ab);
+      return sheets;
+    } catch (e) {
+      console.warn("XLSX parse failed:", e);
+    }
+  }
+  
+  // Fallback: try as text/CSV
+  try {
+    const text = await file.text();
+    return new Promise((resolve) => {
+      Papa.parse(text, {
+        header: true, skipEmptyLines: true, dynamicTyping: true,
+        complete: (r) => {
+          if (r.data?.length > 0 && Object.keys(r.data[0] || {}).length > 1) {
+            const key = file.name.replace(/\.[^.]+$/, "").toLowerCase().replace(/\s+/g, "_");
+            resolve({ [key]: r.data });
+          } else resolve({});
+        },
+        error: () => resolve({}),
+      });
+    });
+  } catch { return {}; }
+}
+
+// Lightweight XLSX parser using JSZip-like manual ZIP extraction
+async function parseXLSXFromZip(arrayBuffer) {
+  if (!window.JSZip) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js";
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  
+  const zip = await window.JSZip.loadAsync(arrayBuffer);
+  const LT = "\x3c"; // < as hex to avoid JSX parser
+  const GT = "\x3e"; // >
+  
+  // Read shared strings
+  const sharedStrings = [];
+  const ssFile = zip.file("xl/sharedStrings.xml");
+  if (ssFile) {
+    const ssXml = await ssFile.async("text");
+    const siRegex = new RegExp(LT + "si[^" + GT + "]*" + GT + "([\\s\\S]*?)" + LT + "\\/si" + GT, "g");
+    let match;
+    while ((match = siRegex.exec(ssXml)) !== null) {
+      const tRegex = new RegExp(LT + "t[^" + GT + "]*" + GT + "([\\s\\S]*?)" + LT + "\\/t" + GT, "g");
+      let tMatch, text = "";
+      while ((tMatch = tRegex.exec(match[1])) !== null) {
+        text += tMatch[1];
+      }
+      sharedStrings.push(decodeXmlEntities(text));
+    }
+  }
+  
+  // Read workbook to get sheet names
+  const wbFile = zip.file("xl/workbook.xml");
+  let wbXml = "";
+  if (wbFile) {
+    wbXml = await wbFile.async("text");
+  }
+  const sheetNames = [];
+  const sheetRegex = new RegExp(LT + 'sheet\\s+name="([^"]*)"[^' + GT + ']*' + GT, "g");
+  let sm;
+  while ((sm = sheetRegex.exec(wbXml)) !== null) {
+    sheetNames.push(sm[1]);
+  }
+  
+  const result = {};
+  
+  for (let si = 0; si < sheetNames.length; si++) {
+    const sheetFile = zip.file("xl/worksheets/sheet" + (si + 1) + ".xml");
+    if (!sheetFile) continue;
+    const sheetXml = await sheetFile.async("text");
+    
+    const rows = [];
+    const rowRegex = new RegExp(LT + "row[^" + GT + "]*" + GT + "([\\s\\S]*?)" + LT + "\\/row" + GT, "g");
+    let rowMatch;
+    while ((rowMatch = rowRegex.exec(sheetXml)) !== null) {
+      const cells = {};
+      const cellRegex = new RegExp(LT + 'c\\s+r="([A-Z]+)\\d+"[^' + GT + ']*(?:t="([^"]*)")?[^' + GT + ']*' + GT + '(?:[\\s\\S]*?' + LT + 'v' + GT + '([\\s\\S]*?)' + LT + '\\/v' + GT + ')?' + '[\\s\\S]*?' + LT + '\\/c' + GT, "g");
+      let cellMatch;
+      while ((cellMatch = cellRegex.exec(rowMatch[1])) !== null) {
+        const col = cellMatch[1];
+        const type = cellMatch[2];
+        const rawVal = cellMatch[3];
+        if (rawVal === undefined || rawVal === null) {
+          cells[col] = "";
+        } else if (type === "s") {
+          cells[col] = sharedStrings[parseInt(rawVal, 10)] || "";
+        } else if (type === "b") {
+          cells[col] = rawVal === "1";
+        } else {
+          const num = parseFloat(rawVal);
+          cells[col] = isNaN(num) ? rawVal : num;
+        }
+      }
+      rows.push(cells);
+    }
+    
+    if (rows.length >= 2) {
+      const headerRow = rows[0];
+      const cols = Object.keys(headerRow).sort();
+      const headers = cols.map(c => String(headerRow[c]).trim());
+      const data = [];
+      for (let i = 1; i < rows.length; i++) {
+        const obj = {};
+        let hasValue = false;
+        cols.forEach((c, ci) => {
+          const val = rows[i][c];
+          obj[headers[ci]] = val !== undefined ? val : "";
+          if (val !== undefined && val !== "") hasValue = true;
+        });
+        if (hasValue) data.push(obj);
+      }
+      if (data.length > 0) {
+        result[sheetNames[si].toLowerCase().replace(/\s+/g, "_")] = data;
+      }
+    }
+  }
+  
+  return result;
+}
+
+function decodeXmlEntities(str) {
+  const map = { "&amp;": "&", "&lt;": String.fromCharCode(60), "&gt;": String.fromCharCode(62), "&quot;": '"', "&apos;": "'" };
+  return str.replace(/&amp;|&lt;|&gt;|&quot;|&apos;/g, m => map[m] || m);
+}
+
+async function parseAllFiles(fileList) {
+  const allSheets = {};
+  const fileInfos = [];
+  for (const file of fileList) {
+    try {
+      const sheets = await parseFileToSheets(file);
+      Object.assign(allSheets, sheets);
+      fileInfos.push({ name: file.name, sheets: Object.keys(sheets).length });
+    } catch (e) {
+      console.warn(`Error parsing ${file.name}:`, e);
+      fileInfos.push({ name: file.name, sheets: 0 });
+    }
+  }
+  return { sheets: allSheets, fileInfos };
+}
+
+function downloadCSV(data, filename) {
+  const csv = Papa.unparse(data);
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+}
+
+/* ═══════════════════ DESIGN SYSTEM ═══════════════════ */
+const C = {
+  bg: "#05080f", surface: "#0c1220", card: "#111c2e", card2: "#162033",
+  border: "#1c2d45", borderLight: "#243654",
+  primary: "#0ea5e9", primary2: "#38bdf8", primaryDim: "#0c4a6e",
+  accent: "#06d6a0", accentDim: "#064e3b",
+  warn: "#f59e0b", warnDim: "#78350f",
+  danger: "#f43f5e", dangerDim: "#881337",
+  text: "#e8edf5", text2: "#7b8ba5", text3: "#4a5a74",
+  white: "#ffffff",
+};
+const CHART_COLORS = ["#0ea5e9","#06d6a0","#f59e0b","#f43f5e","#8b5cf6","#ec4899","#14b8a6","#f97316"];
+const font = "'DM Sans', 'Satoshi', system-ui, sans-serif";
+const mono = "'IBM Plex Mono', 'JetBrains Mono', monospace";
+
+/* ═══════════════════ AUTH & USERS SYSTEM ═══════════════════ */
+const VISIONS = ["financier", "operationnel", "rh", "gouvernance"];
+const VISION_LABELS = { financier: "Financière", operationnel: "Opérationnelle", rh: "RH", gouvernance: "Gouvernance" };
+
+const DEFAULT_USERS = [
+  { id: "admin", nom: "Administrateur", email: "admin@bu-it.ma", password: "1317", role: "admin", visions: [...VISIONS], actif: true },
+  { id: "directeur", nom: "Directeur BU", email: "directeur@bu-it.ma", password: "dir2026", role: "directeur", visions: [...VISIONS], actif: true },
+  { id: "finance", nom: "Resp. Finance", email: "finance@bu-it.ma", password: "fin2026", role: "manager", visions: ["financier"], actif: true },
+  { id: "ops", nom: "Resp. Opérations", email: "ops@bu-it.ma", password: "ops2026", role: "manager", visions: ["operationnel"], actif: true },
+  { id: "rh", nom: "Resp. RH", email: "rh@bu-it.ma", password: "rh2026", role: "manager", visions: ["rh"], actif: true },
+];
+
+/* ═══════════════════ PERSISTENT DATABASE LAYER ═══════════════════
+   Uses Firebase Firestore when configured, falls back to in-memory store.
+   All data persists across sessions, deployments, and devices (with Firebase).
+   ═══════════════════════════════════════════════════════════════════ */
+
+// Firebase state
+let _fb = null;
+let _dbMode = "local"; // "local" | "firebase"
+
+async function loadFirebase() {
+  const cfg = typeof window !== "undefined" && window.__FIREBASE_CONFIG__;
+  if (!cfg || !cfg.apiKey || cfg.apiKey === "VOTRE_API_KEY") {
+    console.log("[DB] Using localStorage");
+    return false;
+  }
+  try {
+    const loadScript = (src) => new Promise((res, rej) => {
+      if (document.querySelector(`script[src="${src}"]`)) { res(); return; }
+      const s = document.createElement("script"); s.src = src;
+      s.onload = res; s.onerror = rej; document.head.appendChild(s);
+    });
+    await Promise.all([
+      loadScript("https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"),
+      loadScript("https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"),
+    ]);
+    if (!window.firebase.apps.length) window.firebase.initializeApp(cfg);
+    _fb = window.firebase.firestore();
+    _fb.enablePersistence({ synchronizeTabs: true }).catch(() => {});
+    _dbMode = "firebase";
+    return true;
+  } catch (e) {
+    console.warn("[DB] Firebase failed:", e);
+    return false;
+  }
+}
+
+const DB = {
+  async get(collection, docId) {
+    if (_dbMode === "firebase") { const doc = await _fb.collection(collection).doc(docId).get(); return doc.exists ? doc.data() : null; }
+    try { return JSON.parse(localStorage.getItem(`bu_${collection}_${docId}`)); } catch { return null; }
+  },
+  async set(collection, docId, data) {
+    if (_dbMode === "firebase") await _fb.collection(collection).doc(docId).set(data, { merge: true });
+    localStorage.setItem(`bu_${collection}_${docId}`, JSON.stringify(data));
+  },
+  async delete(collection, docId) {
+    if (_dbMode === "firebase") await _fb.collection(collection).doc(docId).delete();
+    localStorage.removeItem(`bu_${collection}_${docId}`);
+  },
+  async getAll(collection) {
+    if (_dbMode === "firebase") { const snap = await _fb.collection(collection).get(); return snap.docs.map(d => ({ id: d.id, ...d.data() })); }
+    const prefix = `bu_${collection}_`;
+    const items = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(prefix)) {
+        try { const v = JSON.parse(localStorage.getItem(key)); if (v) items.push({ id: key.slice(prefix.length), ...v }); } catch {}
+      }
+    }
+    return items;
+  },
+  async setAll(collection, items) {
+    for (const item of items) {
+      await DB.set(collection, item.id, item);
+    }
+  },
+};
+
+// ─── User functions ───
+async function initDefaultUsers() {
+  const existing = await DB.getAll("users");
+  if (existing.length === 0) {
+    for (const u of DEFAULT_USERS) {
+      await DB.set("users", u.id, u);
+    }
+  }
+}
+
+async function getUsers() {
+  return await DB.getAll("users");
+}
+
+async function saveUser(user) {
+  await DB.set("users", user.id, user);
+}
+
+async function saveAllUsers(users) {
+  // Clear stale users first for memory mode
+  if (_dbMode === "local") {
+    const existing = await DB.getAll("users");
+    for (const u of existing) {
+      if (!users.find(x => x.id === u.id)) await DB.delete("users", u.id);
+    }
+  }
+  await DB.setAll("users", users);
+}
+
+async function deleteUserDB(userId) {
+  await DB.delete("users", userId);
+}
+
+async function authenticateUser(loginId, password) {
+  const users = await getUsers();
+  return users.find(u => (u.id === loginId || u.email === loginId) && u.password === password && u.actif) || null;
+}
+
+// ─── Projects ───
+async function getProjectsDB() {
+  return await DB.getAll("projects");
+}
+
+async function saveProjectDB(project) {
+  await DB.set("projects", project.id, project);
+}
+
+async function deleteProjectDB(projectId) {
+  await DB.delete("projects", projectId);
+}
+
+// ─── DB status ───
+function getDBMode() { return _dbMode; }
+
+/* ═══════════════════ HELPERS ═══════════════════ */
+const fmt = (n) => { if (n == null || isNaN(n)) return "—"; if (Math.abs(n) >= 1e6) return (n/1e6).toFixed(1)+" M"; if (Math.abs(n) >= 1e3) return (n/1e3).toFixed(0)+" K"; return Number(n).toLocaleString("fr-FR"); };
+const pct = (n) => (n == null || isNaN(n)) ? "—" : Number(n).toFixed(1)+"%";
+const delta = (curr, prev) => prev ? ((curr-prev)/Math.abs(prev)*100) : null;
+
+/* ═══════════════════ DEMO DATA ═══════════════════ */
+function generateDemoData() {
+  const moisN = ["Jan-25","Fév-25","Mar-25","Avr-25","Mai-25","Jun-25","Jul-25","Aoû-25","Sep-25","Oct-25","Nov-25","Déc-25"];
+  const moisN1 = ["Jan-24","Fév-24","Mar-24","Avr-24","Mai-24","Jun-24","Jul-24","Aoû-24","Sep-24","Oct-24","Nov-24","Déc-24"];
+  const mkFin = (mois, base, drift) => mois.map((m, i) => ({
+    mois: m, ca_reel: Math.round(base + Math.random()*300000 + i*drift), ca_budget: Math.round(base*1.05 + i*drift*0.8),
+    charges_personnel: Math.round(base*0.45 + Math.random()*50000), charges_infra: Math.round(base*0.12 + Math.random()*30000),
+    charges_soustraitance: Math.round(base*0.15 + Math.random()*40000), marge_projet: Math.round(base*0.28 + Math.random()*80000 + i*5000),
+    backlog: Math.round(2500000 + Math.random()*1000000 - i*50000), tresorerie: Math.round(1800000 + Math.random()*400000),
+    ebitda: Math.round(base*0.18 + Math.random()*60000), dso_jours: Math.round(45 + Math.random()*25),
+  }));
+  const mkOps = (mois, baseOcc) => mois.map((m, i) => ({
+    mois: m, taux_occupation: Math.round(baseOcc + Math.random()*12-3), projets_actifs: Math.round(12+Math.random()*8),
+    projets_livres: Math.round(2+Math.random()*4), taux_livraison_delai: Math.round(72+Math.random()*20),
+    tjm_moyen: Math.round(850+Math.random()*300), satisfaction_client: +(3.4+Math.random()*1.4).toFixed(1),
+    incidents_production: Math.round(Math.random()*10), sla_respect: Math.round(84+Math.random()*14),
+    tickets_resolus: Math.round(80+Math.random()*60), dette_technique: Math.round(15+Math.random()*20),
+  }));
+  return {
+    financier_n: mkFin(moisN, 950000, 25000), financier_n1: mkFin(moisN1, 870000, 20000),
+    operationnel_n: mkOps(moisN, 78), operationnel_n1: mkOps(moisN1, 74),
+    rh: [
+      { departement:"Développement", effectif:28, taux_occupation:82, turnover:9, formation_h:140, satisfaction:4.0, absenteisme:3.1, seniorite_moy:3.2, certifications:12 },
+      { departement:"Infrastructure & Cloud", effectif:14, taux_occupation:88, turnover:5, formation_h:110, satisfaction:4.3, absenteisme:2.0, seniorite_moy:4.5, certifications:18 },
+      { departement:"Data & IA", effectif:10, taux_occupation:91, turnover:12, formation_h:160, satisfaction:4.1, absenteisme:2.8, seniorite_moy:2.1, certifications:8 },
+      { departement:"Consulting & PMO", effectif:8, taux_occupation:75, turnover:15, formation_h:90, satisfaction:3.7, absenteisme:4.2, seniorite_moy:2.8, certifications:5 },
+      { departement:"QA & DevOps", effectif:12, taux_occupation:85, turnover:7, formation_h:130, satisfaction:4.2, absenteisme:2.5, seniorite_moy:3.8, certifications:15 },
+      { departement:"Support & TMA", effectif:18, taux_occupation:92, turnover:18, formation_h:60, satisfaction:3.4, absenteisme:5.5, seniorite_moy:1.9, certifications:4 },
+    ],
+    gouvernance: [
+      { domaine:"Sécurité SI & Cybersécurité", score:71, risque:"Élevé", actions_ouvertes:9, actions_fermees:14, echeance:"Q1 2026", responsable:"RSSI" },
+      { domaine:"RGPD & Protection données", score:84, risque:"Moyen", actions_ouvertes:3, actions_fermees:11, echeance:"Q2 2026", responsable:"DPO" },
+      { domaine:"Conformité réglementaire", score:78, risque:"Moyen", actions_ouvertes:5, actions_fermees:8, echeance:"Q2 2026", responsable:"Dir. Juridique" },
+      { domaine:"Audit SI interne", score:62, risque:"Élevé", actions_ouvertes:11, actions_fermees:6, echeance:"Q1 2026", responsable:"Audit" },
+      { domaine:"Gestion des risques IT", score:73, risque:"Moyen", actions_ouvertes:7, actions_fermees:9, echeance:"Q2 2026", responsable:"Risk Manager" },
+      { domaine:"Continuité d'activité (PCA/PRA)", score:58, risque:"Élevé", actions_ouvertes:13, actions_fermees:4, echeance:"Q1 2026", responsable:"DSI" },
+      { domaine:"Qualité & Processus ITIL", score:89, risque:"Faible", actions_ouvertes:2, actions_fermees:15, echeance:"Q3 2026", responsable:"Quality Manager" },
+      { domaine:"RSE & Numérique responsable", score:55, risque:"Élevé", actions_ouvertes:8, actions_fermees:2, echeance:"Q4 2026", responsable:"Dir. RSE" },
+    ],
+  };
+}
+
+/* ═══════════════════ EXCEL ═══════════════════ */
+function categorize(sheets) {
+  const kw = { financier:["ca","chiffre","revenue","budget","marge","charge","tresorerie","invest","cout","montant","depense","ebitda","backlog","dso","factur"], operationnel:["projet","livraison","sla","incident","satisfaction","client","delai","production","taux","occupation","tjm","ticket","dette","sprint"], rh:["effectif","employe","turnover","formation","absenteisme","salaire","departement","recrutement","competence","certification","seniorite"], gouvernance:["conformite","risque","audit","rgpd","securite","gouvernance","reglementaire","action","score","rse","pca","pra","itil"] };
+  const result = {};
+  Object.entries(sheets).forEach(([name, rows]) => {
+    if (!rows.length) return;
+    const txt = (name+" "+Object.keys(rows[0]).join(" ")).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+    let best=null, bs=0;
+    Object.entries(kw).forEach(([cat, words]) => { const sc = words.filter(w => txt.includes(w)).length; if (sc>bs) { best=cat; bs=sc; } });
+    if (best && bs>0) { if (!result[best]) result[best]=[]; result[best].push(...rows); }
+  });
+  return result;
+}
+
+async function exportExcel(allData) {
+  // Export all data as CSV (always works)
+  const allRows = [];
+  const addRows = (label, rows) => { if (rows?.length) rows.forEach(r => allRows.push({ _section: label, ...r })); };
+  addRows("Financier_N", allData.financier_n);
+  addRows("Financier_N-1", allData.financier_n1);
+  addRows("Opérationnel_N", allData.operationnel_n);
+  addRows("Opérationnel_N-1", allData.operationnel_n1);
+  addRows("RH", allData.rh);
+  addRows("Gouvernance", allData.gouvernance);
+  downloadCSV(allRows, "Dashboard_BU_Export.csv");
+}
+
+/* ═══════════════════ SHARED UI ═══════════════════ */
+const ttStyle = { background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, color: C.text, fontSize: 12 };
+function Badge({ children, color = C.primary }) { return <span style={{ background: color+"18", color, fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 6, letterSpacing: 0.3 }}>{children}</span>; }
+
+function Input({ label, value, onChange, type = "text", placeholder, icon }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {label && <label style={{ color: C.text2, fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 1 }}>{label}</label>}
+      <div style={{ position: "relative" }}>
+        {icon && <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, opacity: 0.5 }}>{icon}</span>}
+        <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+          style={{ width: "100%", boxSizing: "border-box", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: icon ? "10px 14px 10px 36px" : "10px 14px", color: C.text, fontSize: 13, outline: "none", fontFamily: font, transition: "border-color 0.2s" }}
+          onFocus={e => e.target.style.borderColor = C.primary} onBlur={e => e.target.style.borderColor = C.border} />
+      </div>
+    </div>
+  );
+}
+
+function Btn({ children, onClick, variant = "primary", disabled, small, style: sx }) {
+  const styles = {
+    primary: { background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, color: C.bg, border: "none" },
+    secondary: { background: "transparent", color: C.text2, border: `1px solid ${C.border}` },
+    danger: { background: C.dangerDim, color: C.danger, border: `1px solid ${C.danger}30` },
+    success: { background: C.accentDim, color: C.accent, border: `1px solid ${C.accent}30` },
+    ghost: { background: "transparent", color: C.text3, border: "none" },
+  };
+  return (
+    <button onClick={onClick} disabled={disabled} style={{
+      ...styles[variant], borderRadius: 8, padding: small ? "6px 14px" : "10px 20px",
+      fontSize: small ? 11 : 13, fontWeight: 700, cursor: disabled ? "not-allowed" : "pointer",
+      opacity: disabled ? 0.5 : 1, fontFamily: font, transition: "all 0.2s", letterSpacing: 0.3, ...sx,
+    }}>{children}</button>
+  );
+}
+
+function KPI({ label, value, unit, trend, trendLabel, icon, subtitle }) {
+  const tc = trend === "up" ? C.accent : trend === "down" ? C.danger : C.warn;
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: "18px 22px", position: "relative", overflow: "hidden", transition: "border-color 0.2s" }}
+      onMouseEnter={e => e.currentTarget.style.borderColor = C.primary} onMouseLeave={e => e.currentTarget.style.borderColor = C.border}>
+      <div style={{ position: "absolute", top: -15, right: -10, fontSize: 64, opacity: 0.035 }}>{icon}</div>
+      <div style={{ color: C.text2, fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 1.4, marginBottom: 6 }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
+        <span style={{ color: C.text, fontSize: 26, fontWeight: 800, fontFamily: mono }}>{value}</span>
+        {unit && <span style={{ color: C.text3, fontSize: 12, fontWeight: 500 }}>{unit}</span>}
+      </div>
+      {(trendLabel || subtitle) && <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6 }}>
+        {trendLabel && <span style={{ color: tc, fontSize: 11, fontWeight: 700 }}>{trend==="up"?"▲":trend==="down"?"▼":"◆"} {trendLabel}</span>}
+        {subtitle && <span style={{ color: C.text3, fontSize: 10 }}>{subtitle}</span>}
+      </div>}
+    </div>
+  );
+}
+
+function Card({ title, children, span = 1, badge }) {
+  return (
+    <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: "20px 22px", gridColumn: `span ${span}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <h3 style={{ color: C.text, fontSize: 13, fontWeight: 700, margin: 0, textTransform: "uppercase", letterSpacing: 0.8 }}>{title}</h3>
+        {badge}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function ComparisonRow({ label, valN, valN1, unit = "" }) {
+  const d = delta(valN, valN1);
+  const col = d > 0 ? C.accent : d < 0 ? C.danger : C.text2;
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${C.border}22` }}>
+      <span style={{ color: C.text2, fontSize: 12, flex: 1 }}>{label}</span>
+      <span style={{ color: C.text, fontSize: 13, fontWeight: 700, fontFamily: mono, width: 90, textAlign: "right" }}>{fmt(valN)} {unit}</span>
+      <span style={{ color: C.text3, fontSize: 12, fontFamily: mono, width: 90, textAlign: "right" }}>{fmt(valN1)} {unit}</span>
+      <span style={{ color: col, fontSize: 11, fontWeight: 700, width: 70, textAlign: "right" }}>{d !== null ? (d>0?"+":"")+d.toFixed(1)+"%" : "—"}</span>
+    </div>
+  );
+}
+
+/* ═══════════════════ LOGIN PAGE ═══════════════════ */
+function LoginPage({ onLogin, dbReady }) {
+  const [userId, setUserId] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [shake, setShake] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const handleLogin = async () => {
+    setLoading(true);
+    try {
+      const user = await authenticateUser(userId, password);
+      if (user) { onLogin(user); }
+      else { setError("Identifiant ou mot de passe incorrect"); setShake(true); setTimeout(() => setShake(false), 600); }
+    } catch (e) { setError("Erreur de connexion à la base de données"); }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: font }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,600;0,9..40,700;0,9..40,800;0,9..40,900&family=IBM+Plex+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+      <style>{`
+        @keyframes fadeUp { from { opacity:0; transform:translateY(30px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes shakeX { 0%,100% { transform:translateX(0); } 20%,60% { transform:translateX(-8px); } 40%,80% { transform:translateX(8px); } }
+        @keyframes float { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-8px); } }
+        @keyframes gradientShift { 0% { background-position:0% 50%; } 50% { background-position:100% 50%; } 100% { background-position:0% 50%; } }
+      `}</style>
+
+      {/* Background decoration */}
+      <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, overflow: "hidden", pointerEvents: "none" }}>
+        <div style={{ position: "absolute", top: "15%", left: "10%", width: 300, height: 300, borderRadius: "50%", background: `radial-gradient(circle, ${C.primary}08 0%, transparent 70%)` }} />
+        <div style={{ position: "absolute", bottom: "20%", right: "15%", width: 400, height: 400, borderRadius: "50%", background: `radial-gradient(circle, ${C.accent}06 0%, transparent 70%)` }} />
+      </div>
+
+      <div style={{ animation: shake ? "shakeX 0.5s ease" : "fadeUp 0.6s ease", width: 420, position: "relative" }}>
+        {/* Logo */}
+        <div style={{ textAlign: "center", marginBottom: 36 }}>
+          <div style={{ width: 64, height: 64, borderRadius: 18, background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 26, fontWeight: 900, color: C.bg, marginBottom: 16, animation: "float 3s ease-in-out infinite" }}>BU</div>
+          <h1 style={{ color: C.text, fontSize: 24, fontWeight: 900, margin: "0 0 4px", letterSpacing: -0.5 }}>Cockpit <span style={{ color: C.primary2 }}>Directeur BU</span></h1>
+          <p style={{ color: C.text3, fontSize: 12, margin: 0 }}>IT / Digital / Transformation</p>
+        </div>
+
+        {/* Login card */}
+        <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 20, padding: "36px 32px", backdropFilter: "blur(20px)" }}>
+          <h2 style={{ color: C.text, fontSize: 16, fontWeight: 800, margin: "0 0 24px", textAlign: "center" }}>Connexion</h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+            <Input label="Identifiant ou Email" value={userId} onChange={v => { setUserId(v); setError(""); }} placeholder="ex: admin ou directeur@bu-it.ma" icon="👤" />
+            <Input label="Mot de passe" type="password" value={password} onChange={v => { setPassword(v); setError(""); }} placeholder="••••••••" icon="🔒" />
+            {error && <div style={{ background: C.dangerDim, border: `1px solid ${C.danger}30`, borderRadius: 8, padding: "10px 14px", color: C.danger, fontSize: 12, fontWeight: 600, textAlign: "center" }}>⚠ {error}</div>}
+            <Btn onClick={handleLogin} disabled={loading || !dbReady} style={{ width: "100%", padding: "13px", fontSize: 14, borderRadius: 10, marginTop: 4 }}>{loading ? "Connexion..." : !dbReady ? "Chargement BDD..." : "Se connecter"}</Btn>
+          </div>
+
+          {/* DB status */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 14 }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: dbReady ? C.accent : C.warn, boxShadow: dbReady ? `0 0 8px ${C.accent}60` : "none" }} />
+            <span style={{ color: C.text3, fontSize: 10 }}>{dbReady ? `Base de données : ${getDBMode() === "firebase" ? "Firebase Firestore ✓" : "localStorage ✓"}` : "Initialisation..."}</span>
+          </div>
+
+          {getDBMode() !== "firebase" && dbReady && (
+            <div style={{ marginTop: 14, padding: "10px 14px", background: C.warnDim + "40", border: `1px solid ${C.warn}20`, borderRadius: 8, textAlign: "center" }}>
+              <span style={{ color: C.warn, fontSize: 10 }}>⚠ Mode localStorage : données sauvegardées dans ce navigateur. Configurez Firebase pour le multi-appareils.</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════ CHANGE PASSWORD MODAL ═══════════════════ */
+function PasswordModal({ user, onClose, onSave }) {
+  const [current, setCurrent] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState(false);
+
+  const handleSave = () => {
+    if (current !== user.password) { setError("Mot de passe actuel incorrect"); return; }
+    if (newPw.length < 4) { setError("Minimum 4 caractères"); return; }
+    if (newPw !== confirm) { setError("Les mots de passe ne correspondent pas"); return; }
+    onSave(newPw);
+    setSuccess(true);
+    setTimeout(onClose, 1200);
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 18, padding: 32, width: 400 }}>
+        <h3 style={{ color: C.text, fontSize: 16, fontWeight: 800, margin: "0 0 20px" }}>🔑 Changer le mot de passe</h3>
+        {success ? (
+          <div style={{ textAlign: "center", padding: 20 }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
+            <p style={{ color: C.accent, fontSize: 14, fontWeight: 700 }}>Mot de passe modifié avec succès</p>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <Input label="Mot de passe actuel" type="password" value={current} onChange={v => { setCurrent(v); setError(""); }} icon="🔒" />
+            <Input label="Nouveau mot de passe" type="password" value={newPw} onChange={v => { setNewPw(v); setError(""); }} icon="🔐" />
+            <Input label="Confirmer" type="password" value={confirm} onChange={v => { setConfirm(v); setError(""); }} icon="🔐" />
+            {error && <div style={{ color: C.danger, fontSize: 12, fontWeight: 600, background: C.dangerDim, padding: "8px 12px", borderRadius: 6 }}>⚠ {error}</div>}
+            <div style={{ display: "flex", gap: 10, marginTop: 6 }}>
+              <Btn variant="secondary" onClick={onClose}>Annuler</Btn>
+              <Btn onClick={handleSave}>Enregistrer</Btn>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════ ADMIN PANEL ═══════════════════ */
+function AdminPanel({ currentUser, onClose, onUsersChange }) {
+  const [users, setUsers] = useState([]);
+  const [editUser, setEditUser] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newUser, setNewUser] = useState({ id: "", nom: "", email: "", password: "", role: "manager", visions: [], actif: true });
+  const [toast, setToast] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => { getUsers().then(u => { setUsers(u); setLoading(false); }); }, []);
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2500); };
+
+  const persist = async (updated) => {
+    setUsers(updated);
+    await saveAllUsers(updated);
+    onUsersChange(updated);
+  };
+
+  const addUser = async () => {
+    if (!newUser.id || !newUser.nom || !newUser.password) { showToast("⚠ Remplissez ID, Nom et Mot de passe"); return; }
+    if (users.find(u => u.id === newUser.id)) { showToast("⚠ Cet identifiant existe déjà"); return; }
+    await persist([...users, { ...newUser }]);
+    setNewUser({ id: "", nom: "", email: "", password: "", role: "manager", visions: [], actif: true });
+    setShowAdd(false);
+    showToast("✅ Utilisateur ajouté");
+  };
+
+  const deleteUser = async (id) => {
+    if (id === currentUser.id) { showToast("⚠ Impossible de supprimer votre propre compte"); return; }
+    if (id === "admin") { showToast("⚠ Impossible de supprimer l'admin principal"); return; }
+    await deleteUserDB(id);
+    const updated = users.filter(u => u.id !== id);
+    setUsers(updated); onUsersChange(updated);
+    showToast("✅ Utilisateur supprimé");
+  };
+
+  const toggleVision = async (userId, vision) => {
+    await persist(users.map(u => u.id === userId ? { ...u, visions: u.visions.includes(vision) ? u.visions.filter(v => v !== vision) : [...u.visions, vision] } : u));
+  };
+
+  const toggleActive = async (userId) => {
+    if (userId === currentUser.id) { showToast("⚠ Impossible de désactiver votre propre compte"); return; }
+    await persist(users.map(u => u.id === userId ? { ...u, actif: !u.actif } : u));
+  };
+
+  const updateField = async (userId, field, value) => {
+    await persist(users.map(u => u.id === userId ? { ...u, [field]: value } : u));
+  };
+
+  const resetPassword = async (userId) => {
+    const newPw = "reset" + Math.random().toString(36).slice(2, 6);
+    await persist(users.map(u => u.id === userId ? { ...u, password: newPw } : u));
+    showToast(`✅ Nouveau mot de passe : ${newPw}`);
+  };
+
+  const roleLabels = { admin: "Administrateur", directeur: "Directeur", manager: "Manager", viewer: "Lecteur" };
+  const roleColors = { admin: C.danger, directeur: C.primary, manager: C.warn, viewer: C.text3 };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", zIndex: 1500 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ marginLeft: "auto", width: 820, height: "100vh", background: C.surface, borderLeft: `2px solid ${C.primary}30`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        
+        {/* Header */}
+        <div style={{ padding: "20px 28px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+          <div>
+            <h2 style={{ color: C.text, fontSize: 18, fontWeight: 900, margin: 0 }}>⚙️ Administration</h2>
+            <p style={{ color: C.text3, fontSize: 11, margin: "4px 0 0" }}>Gestion des utilisateurs & droits d'accès</p>
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <Btn onClick={() => setShowAdd(true)} small>+ Nouvel utilisateur</Btn>
+            <button onClick={onClose} style={{ background: "none", border: "none", color: C.text3, fontSize: 22, cursor: "pointer" }}>✕</button>
+          </div>
+        </div>
+
+        {/* Toast */}
+        {toast && <div style={{ margin: "12px 28px 0", padding: "10px 16px", borderRadius: 8, background: toast.includes("⚠") ? C.warnDim : C.accentDim, color: toast.includes("⚠") ? C.warn : C.accent, fontSize: 12, fontWeight: 700, transition: "all 0.3s" }}>{toast}</div>}
+
+        {/* Add user form */}
+        {showAdd && (
+          <div style={{ margin: "16px 28px 0", background: C.card, border: `1px solid ${C.accent}30`, borderRadius: 14, padding: 24 }}>
+            <h3 style={{ color: C.accent, fontSize: 14, fontWeight: 700, margin: "0 0 16px" }}>➕ Ajouter un utilisateur</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              <Input label="Identifiant *" value={newUser.id} onChange={v => setNewUser({...newUser, id: v})} placeholder="ex: jdoe" />
+              <Input label="Nom complet *" value={newUser.nom} onChange={v => setNewUser({...newUser, nom: v})} placeholder="Jean Doe" />
+              <Input label="Email" value={newUser.email} onChange={v => setNewUser({...newUser, email: v})} placeholder="j.doe@bu-it.ma" />
+              <Input label="Mot de passe *" type="password" value={newUser.password} onChange={v => setNewUser({...newUser, password: v})} />
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <label style={{ color: C.text2, fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 1 }}>Rôle</label>
+                <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})}
+                  style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px", color: C.text, fontSize: 13, outline: "none", fontFamily: font }}>
+                  <option value="admin">Administrateur</option>
+                  <option value="directeur">Directeur</option>
+                  <option value="manager">Manager</option>
+                  <option value="viewer">Lecteur</option>
+                </select>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <label style={{ color: C.text2, fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 1 }}>Visions autorisées</label>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {VISIONS.map(v => (
+                    <button key={v} onClick={() => setNewUser({...newUser, visions: newUser.visions.includes(v) ? newUser.visions.filter(x=>x!==v) : [...newUser.visions, v]})}
+                      style={{ padding: "6px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, cursor: "pointer", border: "none",
+                        background: newUser.visions.includes(v) ? C.primary : C.bg, color: newUser.visions.includes(v) ? C.white : C.text3,
+                      }}>{VISION_LABELS[v]}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+              <Btn onClick={addUser} small>✓ Ajouter</Btn>
+              <Btn variant="secondary" onClick={() => setShowAdd(false)} small>Annuler</Btn>
+            </div>
+          </div>
+        )}
+
+        {/* Users table */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "16px 28px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {users.map(u => (
+              <div key={u.id} style={{
+                background: C.card, border: `1px solid ${u.actif ? C.border : C.danger + "30"}`,
+                borderRadius: 14, padding: "18px 22px", opacity: u.actif ? 1 : 0.6,
+                transition: "all 0.2s",
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <div style={{
+                      width: 42, height: 42, borderRadius: 12,
+                      background: `linear-gradient(135deg, ${roleColors[u.role]}30, ${roleColors[u.role]}10)`,
+                      border: `1px solid ${roleColors[u.role]}30`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 18, fontWeight: 800, color: roleColors[u.role],
+                    }}>{u.nom.charAt(0).toUpperCase()}</div>
+                    <div>
+                      <div style={{ color: C.text, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+                        {u.nom}
+                        <Badge color={roleColors[u.role]}>{roleLabels[u.role]}</Badge>
+                        {!u.actif && <Badge color={C.danger}>Inactif</Badge>}
+                        {u.id === currentUser.id && <Badge color={C.accent}>Vous</Badge>}
+                      </div>
+                      <div style={{ color: C.text3, fontSize: 11, marginTop: 2 }}>
+                        ID: <span style={{ fontFamily: mono, color: C.text2 }}>{u.id}</span>
+                        {u.email && <> · {u.email}</>}
+                        {" · MdP: "}<span style={{ fontFamily: mono, color: C.text2 }}>{"•".repeat(u.password.length)}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <Btn variant="secondary" small onClick={() => resetPassword(u.id)}>🔑 Reset MdP</Btn>
+                    <Btn variant={u.actif ? "ghost" : "success"} small onClick={() => toggleActive(u.id)}>{u.actif ? "Désactiver" : "Réactiver"}</Btn>
+                    {u.id !== "admin" && u.id !== currentUser.id && <Btn variant="danger" small onClick={() => deleteUser(u.id)}>✕</Btn>}
+                  </div>
+                </div>
+
+                {/* Vision rights */}
+                <div>
+                  <div style={{ color: C.text3, fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Droits de visualisation des dashboards</div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {VISIONS.map(v => {
+                      const active = u.visions.includes(v);
+                      return (
+                        <button key={v} onClick={() => toggleVision(u.id, v)}
+                          style={{
+                            flex: 1, padding: "10px 8px", borderRadius: 10, cursor: "pointer",
+                            background: active ? C.primaryDim : C.bg,
+                            border: `1px solid ${active ? C.primary + "50" : C.border}`,
+                            transition: "all 0.2s", textAlign: "center",
+                          }}>
+                          <div style={{ fontSize: 18, marginBottom: 4 }}>
+                            {v === "financier" ? "💰" : v === "operationnel" ? "⚙️" : v === "rh" ? "👥" : "🏛"}
+                          </div>
+                          <div style={{ color: active ? C.primary2 : C.text3, fontSize: 10, fontWeight: 700 }}>{VISION_LABELS[v]}</div>
+                          <div style={{ marginTop: 4, width: 8, height: 8, borderRadius: "50%", background: active ? C.accent : C.text3 + "40", margin: "0 auto",
+                            boxShadow: active ? `0 0 8px ${C.accent}50` : "none" }} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: "14px 28px", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+          <span style={{ color: C.text3, fontSize: 11 }}>{users.length} utilisateur(s) · {users.filter(u => u.actif).length} actif(s)</span>
+          <Btn variant="secondary" onClick={onClose} small>Fermer</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════ VISION VIEWS ═══════════════════ */
+function FinancierView({ dataN, dataN1 }) {
+  if (!dataN?.length) return <Empty />;
+  const last = dataN.length-1;
+  const totalCA = dataN.reduce((s,r) => s+(r.ca_reel||0),0);
+  const totalCA1 = dataN1?.reduce((s,r) => s+(r.ca_reel||0),0)||0;
+  const totalBudget = dataN.reduce((s,r) => s+(r.ca_budget||0),0);
+  const totalMarge = dataN.reduce((s,r) => s+(r.marge_projet||0),0);
+  const totalMarge1 = dataN1?.reduce((s,r) => s+(r.marge_projet||0),0)||0;
+  const backlog = dataN[last]?.backlog||0;
+  const backlog1 = dataN1?.[last]?.backlog||0;
+  const avgDSO = Math.round(dataN.reduce((s,r) => s+(r.dso_jours||0),0)/dataN.length);
+  const ecart = totalBudget ? ((totalCA-totalBudget)/totalBudget*100).toFixed(1) : 0;
+  const dCA = delta(totalCA, totalCA1);
+  const combined = dataN.map((r,i) => ({...r, ca_n1: dataN1?.[i]?.ca_reel, marge_n1: dataN1?.[i]?.marge_projet}));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
+        <KPI label="Chiffre d'Affaires" value={fmt(totalCA)} unit="MAD" icon="💰" trend={dCA>0?"up":"down"} trendLabel={dCA!==null?(dCA>0?"+":"")+dCA.toFixed(1)+"% vs N-1":null} />
+        <KPI label="Écart Budget" value={ecart+"%"} icon="📊" trend={ecart>=0?"up":"down"} trendLabel={ecart>=0?"Surperformance":"Sous-performance"} />
+        <KPI label="Marge Projets" value={fmt(totalMarge)} unit="MAD" icon="🎯" trend={delta(totalMarge,totalMarge1)>0?"up":"down"} trendLabel={pct(totalCA?totalMarge/totalCA*100:0)+" du CA"} />
+        <KPI label="Backlog" value={fmt(backlog)} unit="MAD" icon="📦" trend={backlog>backlog1?"up":"down"} trendLabel={delta(backlog,backlog1)!==null?(delta(backlog,backlog1)>0?"+":"")+delta(backlog,backlog1).toFixed(1)+"%":"—"} />
+        <KPI label="DSO Moyen" value={avgDSO} unit="jours" icon="⏳" trend={avgDSO<=50?"up":"down"} trendLabel={avgDSO<=50?"Bon":"À surveiller"} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14 }}>
+        <Card title="CA Réel vs Budget vs N-1" badge={<Badge>Mensuel</Badge>}>
+          <ResponsiveContainer width="100%" height={280}><ComposedChart data={combined}><CartesianGrid strokeDasharray="3 3" stroke={C.border}/><XAxis dataKey="mois" tick={{fill:C.text3,fontSize:10}}/><YAxis tick={{fill:C.text3,fontSize:10}} tickFormatter={v=>fmt(v)}/><Tooltip contentStyle={ttStyle} formatter={v=>fmt(v)+" MAD"}/><Legend wrapperStyle={{fontSize:11}}/><Bar dataKey="ca_reel" fill={C.primary} radius={[3,3,0,0]} name="CA N"/><Line type="monotone" dataKey="ca_budget" stroke={C.warn} strokeWidth={2} strokeDasharray="5 5" dot={false} name="Budget"/><Line type="monotone" dataKey="ca_n1" stroke={C.text3} strokeWidth={1.5} dot={false} name="CA N-1"/></ComposedChart></ResponsiveContainer>
+        </Card>
+        <Card title="Comparaison N vs N-1">
+          <div style={{display:"flex",flexDirection:"column"}}><div style={{display:"flex",justifyContent:"space-between",padding:"4px 0 8px",borderBottom:`1px solid ${C.border}`}}><span style={{color:C.text3,fontSize:10,flex:1}}>Indicateur</span><span style={{color:C.primary,fontSize:10,width:90,textAlign:"right"}}>N</span><span style={{color:C.text3,fontSize:10,width:90,textAlign:"right"}}>N-1</span><span style={{color:C.text3,fontSize:10,width:70,textAlign:"right"}}>Δ</span></div>
+            <ComparisonRow label="CA Total" valN={totalCA} valN1={totalCA1}/><ComparisonRow label="Marge Projets" valN={totalMarge} valN1={totalMarge1}/><ComparisonRow label="Backlog" valN={backlog} valN1={backlog1}/><ComparisonRow label="DSO" valN={avgDSO} valN1={dataN1?.length?Math.round(dataN1.reduce((s,r)=>s+(r.dso_jours||0),0)/dataN1.length):null} unit="j"/>
+          </div>
+        </Card>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Card title="Marge Projet — Évolution mensuelle"><ResponsiveContainer width="100%" height={240}><AreaChart data={combined}><CartesianGrid strokeDasharray="3 3" stroke={C.border}/><XAxis dataKey="mois" tick={{fill:C.text3,fontSize:10}}/><YAxis tick={{fill:C.text3,fontSize:10}} tickFormatter={v=>fmt(v)}/><Tooltip contentStyle={ttStyle} formatter={v=>fmt(v)+" MAD"}/><Area type="monotone" dataKey="marge_projet" fill={C.accent+"30"} stroke={C.accent} strokeWidth={2} name="Marge N"/><Area type="monotone" dataKey="marge_n1" fill={C.text3+"15"} stroke={C.text3} strokeWidth={1.5} name="Marge N-1"/></AreaChart></ResponsiveContainer></Card>
+        <Card title="Backlog & Trésorerie"><ResponsiveContainer width="100%" height={240}><ComposedChart data={dataN}><CartesianGrid strokeDasharray="3 3" stroke={C.border}/><XAxis dataKey="mois" tick={{fill:C.text3,fontSize:10}}/><YAxis yAxisId="l" tick={{fill:C.text3,fontSize:10}} tickFormatter={v=>fmt(v)}/><YAxis yAxisId="r" orientation="right" tick={{fill:C.text3,fontSize:10}} tickFormatter={v=>fmt(v)}/><Tooltip contentStyle={ttStyle} formatter={v=>fmt(v)+" MAD"}/><Bar yAxisId="l" dataKey="backlog" fill={C.primary+"60"} radius={[3,3,0,0]} name="Backlog"/><Line yAxisId="r" type="monotone" dataKey="tresorerie" stroke={C.accent} strokeWidth={2} name="Trésorerie"/></ComposedChart></ResponsiveContainer></Card>
+      </div>
+    </div>
+  );
+}
+
+function OperationnelView({ dataN, dataN1 }) {
+  if (!dataN?.length) return <Empty />;
+  const avgOcc = (dataN.reduce((s,r)=>s+(r.taux_occupation||0),0)/dataN.length).toFixed(1);
+  const avgOcc1 = dataN1?.length?(dataN1.reduce((s,r)=>s+(r.taux_occupation||0),0)/dataN1.length).toFixed(1):null;
+  const avgTJM = Math.round(dataN.reduce((s,r)=>s+(r.tjm_moyen||0),0)/dataN.length);
+  const avgSat = (dataN.reduce((s,r)=>s+(r.satisfaction_client||0),0)/dataN.length).toFixed(1);
+  const avgSLA = (dataN.reduce((s,r)=>s+(r.sla_respect||0),0)/dataN.length).toFixed(0);
+  const avgDette = (dataN.reduce((s,r)=>s+(r.dette_technique||0),0)/dataN.length).toFixed(0);
+  const dOcc = delta(parseFloat(avgOcc), parseFloat(avgOcc1));
+  const combined = dataN.map((r,i) => ({...r, occ_n1: dataN1?.[i]?.taux_occupation, tjm_n1: dataN1?.[i]?.tjm_moyen}));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
+        <KPI label="Taux d'Occupation" value={avgOcc+"%"} icon="👥" trend={avgOcc>=80?"up":"down"} trendLabel={dOcc!==null?(dOcc>0?"+":"")+dOcc.toFixed(1)+"% vs N-1":null} subtitle="Cible : 85%"/>
+        <KPI label="TJM Moyen" value={avgTJM} unit="MAD" icon="💵" trend="up"/>
+        <KPI label="Satisfaction Client" value={avgSat} unit="/5" icon="⭐" trend={avgSat>=4?"up":"down"} trendLabel={avgSat>=4?"Bon":"À améliorer"}/>
+        <KPI label="Respect SLA" value={avgSLA+"%"} icon="⏱" trend={avgSLA>=90?"up":"down"} trendLabel={avgSLA>=90?"Conforme":"Alerte"}/>
+        <KPI label="Dette Technique" value={avgDette+"%"} icon="🔧" trend={avgDette<=20?"up":"down"} trendLabel={avgDette<=20?"Maîtrisé":"Critique"}/>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14 }}>
+        <Card title="Taux d'Occupation — N vs N-1" badge={<Badge color={C.accent}>KPI Clé</Badge>}>
+          <ResponsiveContainer width="100%" height={280}><ComposedChart data={combined}><CartesianGrid strokeDasharray="3 3" stroke={C.border}/><XAxis dataKey="mois" tick={{fill:C.text3,fontSize:10}}/><YAxis domain={[50,100]} tick={{fill:C.text3,fontSize:10}}/><Tooltip contentStyle={ttStyle} formatter={v=>v+"%"}/><Legend wrapperStyle={{fontSize:11}}/><ReferenceLine y={85} stroke={C.warn} strokeDasharray="4 4" label={{value:"Cible 85%",fill:C.warn,fontSize:10}}/><Area type="monotone" dataKey="taux_occupation" fill={C.primary+"25"} stroke={C.primary} strokeWidth={2.5} name="Occupation N"/><Line type="monotone" dataKey="occ_n1" stroke={C.text3} strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="Occupation N-1"/></ComposedChart></ResponsiveContainer>
+        </Card>
+        <Card title="M vs M-1">
+          <div style={{display:"flex",flexDirection:"column"}}><div style={{display:"flex",justifyContent:"space-between",padding:"4px 0 8px",borderBottom:`1px solid ${C.border}`}}><span style={{color:C.text3,fontSize:10,flex:1}}>Indicateur</span><span style={{color:C.primary,fontSize:10,width:60,textAlign:"right"}}>M</span><span style={{color:C.text3,fontSize:10,width:60,textAlign:"right"}}>M-1</span><span style={{color:C.text3,fontSize:10,width:55,textAlign:"right"}}>Δ</span></div>
+            {dataN.length>=2 && (()=>{ const m=dataN[dataN.length-1],m1=dataN[dataN.length-2]; return <><ComparisonRow label="Occupation" valN={m.taux_occupation} valN1={m1.taux_occupation} unit="%"/><ComparisonRow label="TJM" valN={m.tjm_moyen} valN1={m1.tjm_moyen}/><ComparisonRow label="Projets" valN={m.projets_actifs} valN1={m1.projets_actifs}/><ComparisonRow label="SLA" valN={m.sla_respect} valN1={m1.sla_respect} unit="%"/><ComparisonRow label="Incidents" valN={m.incidents_production} valN1={m1.incidents_production}/><ComparisonRow label="Dette tech." valN={m.dette_technique} valN1={m1.dette_technique} unit="%"/></>; })()}
+          </div>
+        </Card>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Card title="Projets & Livraisons"><ResponsiveContainer width="100%" height={240}><BarChart data={dataN}><CartesianGrid strokeDasharray="3 3" stroke={C.border}/><XAxis dataKey="mois" tick={{fill:C.text3,fontSize:10}}/><YAxis tick={{fill:C.text3,fontSize:10}}/><Tooltip contentStyle={ttStyle}/><Bar dataKey="projets_actifs" fill={C.primary} radius={[3,3,0,0]} name="Actifs"/><Bar dataKey="projets_livres" fill={C.accent} radius={[3,3,0,0]} name="Livrés"/></BarChart></ResponsiveContainer></Card>
+        <Card title="Incidents & Dette Technique"><ResponsiveContainer width="100%" height={240}><ComposedChart data={dataN}><CartesianGrid strokeDasharray="3 3" stroke={C.border}/><XAxis dataKey="mois" tick={{fill:C.text3,fontSize:10}}/><YAxis yAxisId="l" tick={{fill:C.text3,fontSize:10}}/><YAxis yAxisId="r" orientation="right" tick={{fill:C.text3,fontSize:10}}/><Tooltip contentStyle={ttStyle}/><Bar yAxisId="l" dataKey="incidents_production" fill={C.danger} radius={[3,3,0,0]} name="Incidents"/><Line yAxisId="r" type="monotone" dataKey="dette_technique" stroke={C.warn} strokeWidth={2} name="Dette Tech. %"/></ComposedChart></ResponsiveContainer></Card>
+      </div>
+    </div>
+  );
+}
+
+function RHView({ data }) {
+  if (!data?.length) return <Empty />;
+  const total = data.reduce((s,r)=>s+(r.effectif||0),0);
+  const avgOcc = (data.reduce((s,r)=>s+(r.taux_occupation||0),0)/data.length).toFixed(1);
+  const avgTO = (data.reduce((s,r)=>s+(r.turnover||0),0)/data.length).toFixed(1);
+  const avgSat = (data.reduce((s,r)=>s+(r.satisfaction||0),0)/data.length).toFixed(1);
+  const totalCerts = data.reduce((s,r)=>s+(r.certifications||0),0);
+  const radarData = data.map(r => ({ dept: r.departement||Object.values(r)[0], Occupation: r.taux_occupation||0, Satisfaction: (r.satisfaction||0)*20, Rétention: 100-(r.turnover||0), Formation: Math.min((r.formation_h||0)/1.6,100) }));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
+        <KPI label="Effectif Total BU" value={total} icon="👥"/><KPI label="Taux Occupation RH" value={avgOcc+"%"} icon="📈" trend={avgOcc>=80?"up":"down"} trendLabel={avgOcc>=85?"Optimal":"À optimiser"}/><KPI label="Turnover Moyen" value={avgTO+"%"} icon="🔄" trend={avgTO<10?"up":"down"} trendLabel={avgTO<10?"Stable":"Risque rétention"}/><KPI label="Satisfaction" value={avgSat} unit="/5" icon="😊" trend={avgSat>=4?"up":"down"}/><KPI label="Certifications" value={totalCerts} icon="🎓" trend="up" trendLabel="Actives"/>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Card title="Radar RH par Département"><ResponsiveContainer width="100%" height={300}><RadarChart data={radarData}><PolarGrid stroke={C.border}/><PolarAngleAxis dataKey="dept" tick={{fill:C.text2,fontSize:10}}/><PolarRadiusAxis tick={{fill:C.text3,fontSize:9}} domain={[0,100]}/><Radar name="Occupation" dataKey="Occupation" stroke={C.primary} fill={C.primary} fillOpacity={0.12} strokeWidth={2}/><Radar name="Satisfaction" dataKey="Satisfaction" stroke={C.accent} fill={C.accent} fillOpacity={0.1}/><Radar name="Rétention" dataKey="Rétention" stroke={C.warn} fill={C.warn} fillOpacity={0.08}/><Tooltip contentStyle={ttStyle}/><Legend wrapperStyle={{fontSize:11}}/></RadarChart></ResponsiveContainer></Card>
+        <Card title="Effectifs & Occupation par Département"><ResponsiveContainer width="100%" height={300}><ComposedChart data={data} layout="vertical"><CartesianGrid strokeDasharray="3 3" stroke={C.border}/><XAxis type="number" tick={{fill:C.text3,fontSize:10}}/><YAxis type="category" dataKey="departement" tick={{fill:C.text2,fontSize:10}} width={130}/><Tooltip contentStyle={ttStyle}/><Bar dataKey="effectif" fill={C.primary} radius={[0,3,3,0]} name="Effectif" barSize={14}/><Bar dataKey="taux_occupation" fill={C.accent+"80"} radius={[0,3,3,0]} name="Occupation %" barSize={14}/></ComposedChart></ResponsiveContainer></Card>
+      </div>
+      <Card title="Tableau Détaillé RH" span={2}>
+        <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse"}}><thead><tr>{Object.keys(data[0]).map(c=><th key={c} style={{padding:"8px 12px",textAlign:"left",color:C.primary2,fontSize:10,fontWeight:700,textTransform:"uppercase",borderBottom:`1px solid ${C.border}`,background:C.bg,position:"sticky",top:0,letterSpacing:0.8}}>{c.replace(/_/g," ")}</th>)}</tr></thead><tbody>{data.map((row,i)=><tr key={i} style={{background:i%2?C.bg+"80":"transparent"}}>{Object.entries(row).map(([k,v],j)=>{let col=C.text;if(k==="turnover"&&v>12)col=C.danger;if(k==="taux_occupation"&&v<80)col=C.warn;if(k==="satisfaction"&&v>=4)col=C.accent;return <td key={j} style={{padding:"7px 12px",color:col,fontSize:12,fontFamily:j>0?mono:"inherit",borderBottom:`1px solid ${C.border}11`}}>{typeof v==="number"?v.toLocaleString("fr-FR"):v}</td>})}</tr>)}</tbody></table></div>
+      </Card>
+    </div>
+  );
+}
+
+function GouvernanceView({ data }) {
+  if (!data?.length) return <Empty />;
+  const avg = (data.reduce((s,r)=>s+(r.score||0),0)/data.length).toFixed(0);
+  const highRisk = data.filter(r=>(r.risque||"").toLowerCase().includes("élev")).length;
+  const totalOpen = data.reduce((s,r)=>s+(r.actions_ouvertes||0),0);
+  const totalClosed = data.reduce((s,r)=>s+(r.actions_fermees||0),0);
+  const riskCol = (r) => { const t=(r||"").toLowerCase(); return t.includes("élev")?C.danger:t.includes("moy")?C.warn:C.accent; };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14 }}>
+        <KPI label="Score Gouvernance" value={avg} unit="/100" icon="🏛" trend={avg>=70?"up":"down"} trendLabel={avg>=75?"Conforme":"À risque"}/><KPI label="Risques Élevés" value={highRisk} icon="🔴" trend={highRisk<=2?"up":"down"} trendLabel={`sur ${data.length} domaines`}/><KPI label="Actions Ouvertes" value={totalOpen} icon="📋" trend="down" trendLabel="En cours"/><KPI label="Actions Fermées" value={totalClosed} icon="✅" trend="up" trendLabel={pct(totalClosed/(totalOpen+totalClosed)*100)+" complétion"}/>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <Card title="Scores de Conformité"><ResponsiveContainer width="100%" height={320}><BarChart data={data} layout="vertical"><CartesianGrid strokeDasharray="3 3" stroke={C.border}/><XAxis type="number" domain={[0,100]} tick={{fill:C.text3,fontSize:10}}/><YAxis type="category" dataKey="domaine" tick={{fill:C.text2,fontSize:9}} width={180}/><Tooltip contentStyle={ttStyle}/><ReferenceLine x={70} stroke={C.warn} strokeDasharray="4 4"/><Bar dataKey="score" radius={[0,4,4,0]} name="Score" barSize={16}>{data.map((e,i)=><Cell key={i} fill={e.score>=80?C.accent:e.score>=65?C.warn:C.danger}/>)}</Bar></BarChart></ResponsiveContainer></Card>
+        <Card title="Matrice des Risques IT">
+          <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:320,overflowY:"auto"}}>
+            {data.sort((a,b)=>(b.actions_ouvertes||0)-(a.actions_ouvertes||0)).map((r,i)=>(
+              <div key={i} style={{background:C.bg,borderRadius:10,padding:"12px 16px",border:`1px solid ${riskCol(r.risque)}20`,display:"flex",alignItems:"center",gap:12}}>
+                <div style={{width:8,height:8,borderRadius:"50%",background:riskCol(r.risque),boxShadow:`0 0 10px ${riskCol(r.risque)}50`,flexShrink:0}}/>
+                <div style={{flex:1,minWidth:0}}><div style={{color:C.text,fontSize:12,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.domaine}</div><div style={{color:C.text3,fontSize:10,marginTop:2}}>{r.responsable} · Éch. {r.echeance}</div></div>
+                <div style={{textAlign:"right",flexShrink:0}}><div style={{color:C.text,fontSize:13,fontWeight:700,fontFamily:mono}}>{r.score}/100</div><Badge color={riskCol(r.risque)}>{r.risque}</Badge></div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+      <Card title="Suivi des Actions Correctives" span={2}><ResponsiveContainer width="100%" height={240}><BarChart data={data}><CartesianGrid strokeDasharray="3 3" stroke={C.border}/><XAxis dataKey="domaine" tick={{fill:C.text3,fontSize:9}} angle={-20} textAnchor="end" height={60}/><YAxis tick={{fill:C.text3,fontSize:10}}/><Tooltip contentStyle={ttStyle}/><Legend wrapperStyle={{fontSize:11}}/><Bar dataKey="actions_ouvertes" fill={C.danger} radius={[3,3,0,0]} name="Ouvertes" stackId="a"/><Bar dataKey="actions_fermees" fill={C.accent} radius={[3,3,0,0]} name="Fermées" stackId="a"/></BarChart></ResponsiveContainer></Card>
+    </div>
+  );
+}
+
+function Empty() { return <div style={{color:C.text3,textAlign:"center",padding:60,fontSize:14}}>Aucune donnée disponible. Importez vos fichiers Excel.</div>; }
+
+/* ═══════════════════ AUTRE VIEW — Non-categorized data ═══════════════════ */
+function AutreView({ data, sheetsMap }) {
+  if (!sheetsMap || Object.keys(sheetsMap).length === 0) return <Empty />;
+
+  const analyzeColumns = (rows) => {
+    if (!rows || rows.length === 0) return {};
+    const cols = Object.keys(rows[0]);
+    const analysis = {};
+    cols.forEach(col => {
+      const vals = rows.map(r => r[col]).filter(v => v !== "" && v !== null && v !== undefined);
+      const nums = vals.filter(v => typeof v === "number" || (!isNaN(parseFloat(v)) && isFinite(v)));
+      const isNumeric = nums.length > vals.length * 0.6;
+      if (isNumeric) {
+        const numVals = nums.map(v => typeof v === "number" ? v : parseFloat(v));
+        analysis[col] = {
+          type: "numeric", count: vals.length,
+          min: Math.min(...numVals), max: Math.max(...numVals),
+          avg: numVals.reduce((a, b) => a + b, 0) / numVals.length,
+          sum: numVals.reduce((a, b) => a + b, 0),
+        };
+      } else {
+        const unique = [...new Set(vals.map(v => String(v)))];
+        analysis[col] = { type: "text", count: vals.length, unique: unique.length, samples: unique.slice(0, 5) };
+      }
+    });
+    return analysis;
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ background: C.card, border: `1px solid ${C.warn}30`, borderRadius: 14, padding: "16px 22px" }}>
+        <div style={{ color: C.warn, fontSize: 13, fontWeight: 700, marginBottom: 4 }}>📁 Données non catégorisées</div>
+        <div style={{ color: C.text2, fontSize: 12 }}>
+          {Object.keys(sheetsMap).length} feuille(s) non assignée(s). Utilisez le bouton 📁 Gérer fichiers pour les affecter à une vision, ou explorez-les ci-dessous.
+        </div>
+      </div>
+
+      {Object.entries(sheetsMap).map(([sheetName, rows]) => {
+        const cols = rows.length > 0 ? Object.keys(rows[0]) : [];
+        const analysis = analyzeColumns(rows);
+        const numericCols = Object.entries(analysis).filter(([, a]) => a.type === "numeric");
+        const textCols = Object.entries(analysis).filter(([, a]) => a.type === "text");
+
+        return (
+          <div key={sheetName} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {/* Sheet header */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <span style={{ color: C.text, fontSize: 16, fontWeight: 800 }}>{sheetName}</span>
+                <span style={{ color: C.text3, fontSize: 12, marginLeft: 10 }}>{rows.length} lignes · {cols.length} colonnes</span>
+              </div>
+            </div>
+
+            {/* Column analysis cards */}
+            {numericCols.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+                {numericCols.slice(0, 8).map(([col, a]) => (
+                  <KPI key={col} label={col} value={fmt(a.sum)} unit={a.avg > 1000 ? "" : ""} icon="📊"
+                    trend={a.avg > 0 ? "up" : "down"} trendLabel={`Moy: ${fmt(a.avg)}`}
+                    subtitle={`Min: ${fmt(a.min)} · Max: ${fmt(a.max)}`} />
+                ))}
+              </div>
+            )}
+
+            {/* Auto-generated charts for numeric columns */}
+            {numericCols.length >= 2 && (
+              <div style={{ display: "grid", gridTemplateColumns: numericCols.length >= 4 ? "1fr 1fr" : "1fr", gap: 14 }}>
+                <Card title={`Évolution — ${sheetName}`}>
+                  <ResponsiveContainer width="100%" height={260}>
+                    <ComposedChart data={rows}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                      <XAxis dataKey={textCols.length > 0 ? textCols[0][0] : cols[0]} tick={{ fill: C.text3, fontSize: 10 }} />
+                      <YAxis tick={{ fill: C.text3, fontSize: 10 }} tickFormatter={v => fmt(v)} />
+                      <Tooltip contentStyle={ttStyle} formatter={v => fmt(v)} />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      {numericCols.slice(0, 4).map(([col], i) => (
+                        i === 0
+                          ? <Bar key={col} dataKey={col} fill={CHART_COLORS[i]} radius={[3, 3, 0, 0]} name={col} />
+                          : <Line key={col} type="monotone" dataKey={col} stroke={CHART_COLORS[i]} strokeWidth={2} dot={false} name={col} />
+                      ))}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </Card>
+                {numericCols.length >= 3 && (
+                  <Card title={`Répartition — ${numericCols[0][0]}`}>
+                    <ResponsiveContainer width="100%" height={260}>
+                      <BarChart data={rows} layout="vertical">
+                        <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                        <XAxis type="number" tick={{ fill: C.text3, fontSize: 10 }} tickFormatter={v => fmt(v)} />
+                        <YAxis type="category" dataKey={textCols.length > 0 ? textCols[0][0] : cols[0]} tick={{ fill: C.text2, fontSize: 9 }} width={120} />
+                        <Tooltip contentStyle={ttStyle} formatter={v => fmt(v)} />
+                        <Bar dataKey={numericCols[0][0]} radius={[0, 4, 4, 0]} name={numericCols[0][0]}>
+                          {rows.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </Card>
+                )}
+              </div>
+            )}
+
+            {/* Data table */}
+            <Card title="Données brutes">
+              <div style={{ overflowX: "auto", maxHeight: 320 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: cols.length * 120 }}>
+                  <thead>
+                    <tr>{cols.map(c => (
+                      <th key={c} style={{ padding: "8px 10px", textAlign: "left", color: analysis[c]?.type === "numeric" ? C.primary2 : C.text2, fontSize: 10, fontWeight: 700, textTransform: "uppercase", borderBottom: `1px solid ${C.border}`, background: C.bg, position: "sticky", top: 0, whiteSpace: "nowrap" }}>
+                        {c} <span style={{ color: C.text3, fontWeight: 400 }}>({analysis[c]?.type === "numeric" ? "num" : "txt"})</span>
+                      </th>
+                    ))}</tr>
+                  </thead>
+                  <tbody>{rows.slice(0, 50).map((row, i) => (
+                    <tr key={i} style={{ background: i % 2 ? C.bg + "80" : "transparent" }}>
+                      {cols.map(c => (
+                        <td key={c} style={{ padding: "6px 10px", color: C.text, fontSize: 11, fontFamily: analysis[c]?.type === "numeric" ? mono : "inherit", borderBottom: `1px solid ${C.border}11`, whiteSpace: "nowrap" }}>
+                          {typeof row[c] === "number" ? row[c].toLocaleString("fr-FR") : String(row[c] ?? "")}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}</tbody>
+                </table>
+                {rows.length > 50 && <div style={{ padding: 10, textAlign: "center", color: C.text3, fontSize: 11 }}>... et {rows.length - 50} lignes supplémentaires</div>}
+              </div>
+            </Card>
+
+            {/* AI suggestion */}
+            <div style={{ background: C.primaryDim + "30", border: `1px solid ${C.primary}30`, borderRadius: 12, padding: "14px 20px" }}>
+              <div style={{ color: C.primary2, fontSize: 12, fontWeight: 700, marginBottom: 6 }}>💡 Suggestion d'analyse IA</div>
+              <div style={{ color: C.text2, fontSize: 11, lineHeight: 1.6 }}>
+                Cette feuille contient {numericCols.length} colonne(s) numérique(s) ({numericCols.map(([c]) => c).join(", ")}) et {textCols.length} colonne(s) texte ({textCols.map(([c]) => c).join(", ")}).
+                {numericCols.length >= 2 && " Les données se prêtent à une analyse de tendances et de comparaisons."}
+                {numericCols.length >= 1 && textCols.length >= 1 && " Une ventilation par catégorie est possible."}
+                {" Utilisez le bouton 🤖 IA pour une analyse approfondie."}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ═══════════════════ AI PANEL ═══════════════════ */
+function AIPanel({ data, vision, onClose }) {
+  const [analysis, setAnalysis] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [prompt, setPrompt] = useState("");
+  const analyze = async (q) => {
+    setLoading(true); setAnalysis("");
+    const snap = JSON.stringify(data).slice(0,6000);
+    const sys = `Tu es un analyste stratégique senior spécialisé en pilotage de BU IT / Digital / Transformation au Maroc. Vision "${vision}".\nRéponds en français :\n1. 📊 SYNTHÈSE EXÉCUTIVE\n2. ✅ POINTS FORTS\n3. ⚠️ RISQUES (🔴 Critique / 🟠 Élevé / 🟡 Modéré)\n4. 💡 PRÉCONISATIONS\n5. 📈 TENDANCES`;
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:sys,messages:[{role:"user",content:(q||`Analyse vision ${vision}`)+"\n\nDonnées:\n"+snap}]})});
+      const d = await res.json(); setAnalysis((d.content||[]).map(b=>b.text||"").join("\n")||"Erreur.");
+    } catch { setAnalysis("Erreur de connexion."); }
+    setLoading(false);
+  };
+  useEffect(()=>{ if(data) analyze(); },[data,vision]);
+  const quickQ = ["Risques majeurs ?","Taux d'occupation : leviers ?","Backlog soutenable ?","Plan d'action Q1"];
+
+  return (
+    <div style={{position:"fixed",top:0,right:0,width:520,height:"100vh",background:`linear-gradient(180deg,${C.card} 0%,${C.bg} 100%)`,borderLeft:`2px solid ${C.primary}40`,zIndex:1000,display:"flex",flexDirection:"column",boxShadow:"-8px 0 40px rgba(0,0,0,0.6)"}}>
+      <div style={{padding:"16px 22px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <div><div style={{color:C.text,fontSize:15,fontWeight:800}}>🤖 Analyse IA</div><div style={{color:C.primary2,fontSize:11}}>Vision : {vision}</div></div>
+        <button onClick={onClose} style={{background:"none",border:"none",color:C.text3,fontSize:20,cursor:"pointer"}}>✕</button>
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:22}}>
+        {loading ? <div style={{textAlign:"center",paddingTop:60}}><div style={{fontSize:44,animation:"spin 2s linear infinite"}}>🧠</div><style>{`@keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}`}</style><p style={{color:C.primary2,fontSize:13,marginTop:12}}>Analyse en cours...</p></div>
+        : <div style={{color:C.text,fontSize:13.5,lineHeight:1.85,whiteSpace:"pre-wrap"}}>{analysis}</div>}
+      </div>
+      <div style={{padding:"12px 22px",borderTop:`1px solid ${C.border}`}}>
+        <div style={{display:"flex",gap:8,marginBottom:10}}>
+          <input value={prompt} onChange={e=>setPrompt(e.target.value)} placeholder="Question spécifique..." onKeyDown={e=>{if(e.key==="Enter"&&prompt.trim()){analyze(prompt);setPrompt("");}}} style={{flex:1,background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 14px",color:C.text,fontSize:12,outline:"none"}}/>
+          <Btn onClick={()=>{if(prompt.trim()){analyze(prompt);setPrompt("");}}} small>→</Btn>
+        </div>
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{quickQ.map(q=><button key={q} onClick={()=>analyze(q)} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 10px",color:C.text3,fontSize:10,cursor:"pointer"}}>{q}</button>)}</div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════ DATA ENTRY STORAGE ═══════════════════ */
+const MONTHS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
+const CURRENT_YEAR = 2026;
+
+function emptyRow(mois, annee) {
+  return {
+    mois, annee,
+    effectif_actuel: "", effectif_n1: "", effectif_n2: "", effectif_n3: "",
+    sla_actuel: "", sla_prev: "",
+    csat: "",
+    pm_actuel: "", pm_prev: "",
+    ca_actuel: "", ca_prev: "",
+    commentaire: "",
+  };
+}
+
+/* ═══════════════════ DATA ENTRY PANEL ═══════════════════ */
+function DataEntryPanel({ currentUser, onClose }) {
+  const [projects, setProjects] = useState([]);
+  const [selProject, setSelProject] = useState(null);
+  const [newName, setNewName] = useState("");
+  const [toast, setToast] = useState("");
+  const [selYear, setSelYear] = useState(CURRENT_YEAR);
+  const [editingCell, setEditingCell] = useState(null);
+  const [loadingProjects, setLoadingProjects] = useState(true);
+
+  useEffect(() => {
+    getProjectsDB().then(p => { setProjects(p); setLoadingProjects(false); });
+  }, []);
+
+  const showToast = (m) => { setToast(m); setTimeout(() => setToast(""), 2500); };
+
+  const addProject = async () => {
+    if (!newName.trim()) { showToast("⚠ Saisissez un nom de projet"); return; }
+    if (projects.find(p => p.name.toLowerCase() === newName.trim().toLowerCase())) { showToast("⚠ Ce projet existe déjà"); return; }
+    const p = { id: Date.now().toString(36), name: newName.trim(), createdBy: currentUser.id, createdAt: new Date().toISOString(), data: {} };
+    MONTHS_FR.forEach((m, i) => { p.data[`${CURRENT_YEAR}-${i}`] = emptyRow(m, CURRENT_YEAR); });
+    const updated = [...projects, p];
+    setProjects(updated);
+    await saveProjectDB(p);
+    setSelProject(p.id); setNewName("");
+    showToast("✅ Projet ajouté");
+  };
+
+  const handleDeleteProject = async (id) => {
+    await deleteProjectDB(id);
+    const updated = projects.filter(p => p.id !== id);
+    setProjects(updated);
+    if (selProject === id) setSelProject(updated[0]?.id || null);
+    showToast("✅ Projet supprimé");
+  };
+
+  // Debounced save to DB
+  const saveToDBRef = useRef(null);
+  if (!saveToDBRef.current) {
+    saveToDBRef.current = _.debounce(async (proj) => {
+      try { await saveProjectDB(proj); } catch (e) { console.warn("Save error:", e); }
+    }, 800);
+  }
+
+  const updateCell = (projectId, key, field, value) => {
+    const updated = projects.map(p => {
+      if (p.id !== projectId) return p;
+      const d = { ...p.data };
+      if (!d[key]) d[key] = emptyRow(MONTHS_FR[parseInt(key.split("-")[1])], parseInt(key.split("-")[0]));
+      d[key] = { ...d[key], [field]: value };
+      const updatedProject = { ...p, data: d };
+      saveToDBRef.current(updatedProject);
+      return updatedProject;
+    });
+    setProjects(updated);
+  };
+
+  const project = projects.find(p => p.id === selProject);
+  const yearKeys = MONTHS_FR.map((_, i) => `${selYear}-${i}`);
+
+  const exportProjectExcel = async () => {
+    const allRows = [];
+    projects.forEach(p => {
+      MONTHS_FR.forEach((m, i) => {
+        const key = `${selYear}-${i}`;
+        const d = p.data[key] || emptyRow(m, selYear);
+        allRows.push({
+          "Projet": p.name, "Mois": m, "Année": selYear,
+          "Effectif Actuel": d.effectif_actuel, "Effectif N+1": d.effectif_n1, "Effectif N+2": d.effectif_n2, "Effectif N+3": d.effectif_n3,
+          "SLA Actuel %": d.sla_actuel, "SLA Prév. %": d.sla_prev,
+          "CSAT /5": d.csat,
+          "PM Actuel": d.pm_actuel, "PM Prév.": d.pm_prev,
+          "CA Actuel": d.ca_actuel, "CA Prév.": d.ca_prev,
+          "Commentaire": d.commentaire,
+        });
+      });
+    });
+    downloadCSV(allRows, `Saisie_Projets_${selYear}.csv`);
+    showToast("✅ Export généré");
+  };
+
+  const fields = [
+    { key: "effectif_actuel", label: "Eff. Actuel", group: "Effectifs", color: C.primary },
+    { key: "effectif_n1", label: "Eff. N+1", group: "Effectifs", color: C.primary },
+    { key: "effectif_n2", label: "Eff. N+2", group: "Effectifs", color: C.primary },
+    { key: "effectif_n3", label: "Eff. N+3", group: "Effectifs", color: C.primary },
+    { key: "sla_actuel", label: "SLA Act. %", group: "SLA", color: C.accent },
+    { key: "sla_prev", label: "SLA Prév. %", group: "SLA", color: C.accent },
+    { key: "csat", label: "CSAT /5", group: "CSAT", color: C.warn },
+    { key: "pm_actuel", label: "PM Act.", group: "Projet Marge", color: "#8b5cf6" },
+    { key: "pm_prev", label: "PM Prév.", group: "Projet Marge", color: "#8b5cf6" },
+    { key: "ca_actuel", label: "CA Act.", group: "Chiffre d'Affaires", color: "#ec4899" },
+    { key: "ca_prev", label: "CA Prév.", group: "Chiffre d'Affaires", color: "#ec4899" },
+    { key: "commentaire", label: "Commentaire", group: "Notes", color: C.text3 },
+  ];
+
+  const groups = [...new Set(fields.map(f => f.group))];
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", display: "flex", zIndex: 1500 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ margin: "auto", width: "95vw", maxWidth: 1400, height: "92vh", background: C.surface, borderRadius: 20, border: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
+
+        {/* Header */}
+        <div style={{ padding: "18px 28px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+          <div>
+            <h2 style={{ color: C.text, fontSize: 18, fontWeight: 900, margin: 0 }}>📝 Saisie Mensuelle — Données Projets</h2>
+            <p style={{ color: C.text3, fontSize: 11, margin: "4px 0 0" }}>Effectifs, SLA, CSAT, PM, CA — Actuel & Prévisionnel N+1 à N+3</p>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <select value={selYear} onChange={e => setSelYear(Number(e.target.value))} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 14px", color: C.text, fontSize: 12, outline: "none", fontFamily: font }}>
+              {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+            {projects.length > 0 && <Btn variant="success" onClick={exportProjectExcel} small>📥 Export Excel</Btn>}
+            <button onClick={onClose} style={{ background: "none", border: "none", color: C.text3, fontSize: 22, cursor: "pointer" }}>✕</button>
+          </div>
+        </div>
+
+        {toast && <div style={{ margin: "10px 28px 0", padding: "8px 14px", borderRadius: 8, background: toast.includes("⚠") ? C.warnDim : C.accentDim, color: toast.includes("⚠") ? C.warn : C.accent, fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{toast}</div>}
+
+        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+          {/* Sidebar - Projects list */}
+          <div style={{ width: 260, borderRight: `1px solid ${C.border}`, display: "flex", flexDirection: "column", flexShrink: 0 }}>
+            <div style={{ padding: "14px 16px", borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nom du projet..." onKeyDown={e => { if (e.key === "Enter") addProject(); }}
+                  style={{ flex: 1, background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", color: C.text, fontSize: 12, outline: "none", fontFamily: font }}
+                  onFocus={e => e.target.style.borderColor = C.primary} onBlur={e => e.target.style.borderColor = C.border} />
+                <Btn onClick={addProject} small>+</Btn>
+              </div>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: 8 }}>
+              {projects.length === 0 && <div style={{ textAlign: "center", padding: 30, color: C.text3, fontSize: 12 }}>Aucun projet. Ajoutez-en un ci-dessus.</div>}
+              {projects.map(p => {
+                const filled = yearKeys.filter(k => {
+                  const d = p.data[k]; if (!d) return false;
+                  return Object.entries(d).some(([fk, fv]) => fk !== "mois" && fk !== "annee" && fv !== "" && fv !== null && fv !== undefined);
+                }).length;
+                return (
+                  <div key={p.id} onClick={() => setSelProject(p.id)} style={{
+                    background: selProject === p.id ? C.primaryDim : "transparent",
+                    border: `1px solid ${selProject === p.id ? C.primary + "40" : "transparent"}`,
+                    borderRadius: 10, padding: "12px 14px", cursor: "pointer", marginBottom: 4, transition: "all 0.15s",
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <div style={{ color: C.text, fontSize: 13, fontWeight: 700 }}>{p.name}</div>
+                        <div style={{ color: C.text3, fontSize: 10, marginTop: 2 }}>{filled}/12 mois renseignés</div>
+                      </div>
+                      <button onClick={e => { e.stopPropagation(); handleDeleteProject(p.id); }} style={{ background: "none", border: "none", color: C.text3, cursor: "pointer", fontSize: 14, padding: 4, borderRadius: 4 }}
+                        onMouseEnter={e => { e.currentTarget.style.color = C.danger; e.currentTarget.style.background = C.dangerDim; }}
+                        onMouseLeave={e => { e.currentTarget.style.color = C.text3; e.currentTarget.style.background = "none"; }}>✕</button>
+                    </div>
+                    {/* Mini progress bar */}
+                    <div style={{ marginTop: 6, height: 3, borderRadius: 2, background: C.border }}>
+                      <div style={{ height: "100%", borderRadius: 2, background: `linear-gradient(90deg, ${C.primary}, ${C.accent})`, width: `${(filled / 12) * 100}%`, transition: "width 0.3s" }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Main - Data grid */}
+          <div style={{ flex: 1, overflow: "auto" }}>
+            {!project ? (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 16 }}>
+                <div style={{ fontSize: 56, opacity: 0.3 }}>📋</div>
+                <p style={{ color: C.text3, fontSize: 14 }}>Sélectionnez ou créez un projet pour saisir les données</p>
+              </div>
+            ) : (
+              <div style={{ padding: 4 }}>
+                <table style={{ borderCollapse: "separate", borderSpacing: 0, width: "100%", minWidth: 1200 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ ...thStyle, position: "sticky", left: 0, zIndex: 3, background: C.surface, minWidth: 90 }}>Mois</th>
+                      {groups.map(g => {
+                        const cols = fields.filter(f => f.group === g);
+                        return <th key={g} colSpan={cols.length} style={{ ...thStyle, color: cols[0].color, borderBottom: `2px solid ${cols[0].color}30`, textAlign: "center" }}>{g}</th>;
+                      })}
+                    </tr>
+                    <tr>
+                      <th style={{ ...thStyle, position: "sticky", left: 0, zIndex: 3, background: C.surface }}></th>
+                      {fields.map(f => <th key={f.key} style={{ ...thStyle, color: f.color, fontSize: 9, fontWeight: 600, minWidth: f.key === "commentaire" ? 180 : 80 }}>{f.label}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {MONTHS_FR.map((m, mi) => {
+                      const key = `${selYear}-${mi}`;
+                      const row = project.data[key] || emptyRow(m, selYear);
+                      const hasData = Object.entries(row).some(([k, v]) => k !== "mois" && k !== "annee" && v !== "" && v !== null && v !== undefined);
+                      return (
+                        <tr key={key} style={{ background: hasData ? C.primaryDim + "15" : mi % 2 ? C.bg + "40" : "transparent" }}>
+                          <td style={{ ...tdStyle, position: "sticky", left: 0, zIndex: 1, background: C.surface, fontWeight: 700, color: C.text2, fontSize: 11 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              {hasData && <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.accent, flexShrink: 0 }} />}
+                              {m.slice(0, 4)}
+                            </div>
+                          </td>
+                          {fields.map(f => (
+                            <td key={f.key} style={tdStyle}>
+                              {f.key === "commentaire" ? (
+                                <textarea value={row[f.key] || ""} onChange={e => updateCell(project.id, key, f.key, e.target.value)}
+                                  placeholder="..."
+                                  style={{ ...cellInputStyle, minHeight: 28, resize: "vertical", fontFamily: font, lineHeight: 1.3 }} />
+                              ) : (
+                                <input type={f.key === "csat" ? "number" : "text"}
+                                  step={f.key === "csat" ? "0.1" : undefined}
+                                  value={row[f.key] || ""}
+                                  onChange={e => updateCell(project.id, key, f.key, e.target.value)}
+                                  placeholder="—"
+                                  onFocus={e => { e.target.style.borderColor = f.color; e.target.style.background = C.card2; }}
+                                  onBlur={e => { e.target.style.borderColor = "transparent"; e.target.style.background = C.bg; }}
+                                  style={cellInputStyle} />
+                              )}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                {/* Summary bar */}
+                <div style={{ display: "flex", gap: 12, padding: "14px 8px", borderTop: `1px solid ${C.border}`, marginTop: 8, flexWrap: "wrap" }}>
+                  {[
+                    { label: "Σ Eff. Actuel", key: "effectif_actuel", color: C.primary },
+                    { label: "Moy. SLA", key: "sla_actuel", color: C.accent, avg: true },
+                    { label: "Moy. CSAT", key: "csat", color: C.warn, avg: true },
+                    { label: "Σ CA Actuel", key: "ca_actuel", color: "#ec4899" },
+                    { label: "Σ CA Prév.", key: "ca_prev", color: "#ec4899" },
+                    { label: "Σ PM Actuel", key: "pm_actuel", color: "#8b5cf6" },
+                  ].map(s => {
+                    const vals = yearKeys.map(k => parseFloat(project.data[k]?.[s.key]) || 0).filter(v => v > 0);
+                    const total = vals.reduce((a, b) => a + b, 0);
+                    const display = s.avg ? (vals.length ? (total / vals.length).toFixed(1) : "—") : fmt(total);
+                    return (
+                      <div key={s.key} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ width: 6, height: 6, borderRadius: "50%", background: s.color }} />
+                        <span style={{ color: C.text3, fontSize: 10 }}>{s.label}</span>
+                        <span style={{ color: C.text, fontSize: 13, fontWeight: 800, fontFamily: mono }}>{display}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const thStyle = { padding: "8px 6px", textAlign: "left", color: C.text3, fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, borderBottom: `1px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 2 };
+const tdStyle = { padding: "3px 3px", verticalAlign: "top" };
+const cellInputStyle = { width: "100%", boxSizing: "border-box", background: C.bg, border: "1px solid transparent", borderRadius: 6, padding: "6px 8px", color: C.text, fontSize: 12, fontFamily: mono, outline: "none", transition: "all 0.15s", textAlign: "right" };
+
+/* ═══════════════════ MAIN APP ═══════════════════ */
+function App() {
+  const [currentUser, setCurrentUser] = useState(null);
+  const [page, setPage] = useState("dashboard");
+  const [vision, setVision] = useState(null);
+  const [data, setData] = useState(null);
+  const [files, setFiles] = useState([]);
+  const [showAI, setShowAI] = useState(false);
+  const [showPwModal, setShowPwModal] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [showDataEntry, setShowDataEntry] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [dbReady, setDbReady] = useState(false);
+  const [importStatus, setImportStatus] = useState(null);
+  const [demoMode, setDemoMode] = useState(true);
+  const [rawSheets, setRawSheets] = useState({}); // all imported sheets raw
+  const [sheetAssign, setSheetAssign] = useState({}); // manual sheet -> vision mapping
+  const [showImportPanel, setShowImportPanel] = useState(false);
+  const fileInputRef = useRef();
+
+  // Build dashboard data from raw sheets + assignments
+  const buildDataFromSheets = useCallback((sheets, assignments) => {
+    const result = { financier_n: null, financier_n1: null, operationnel_n: null, operationnel_n1: null, rh: null, gouvernance: null, autre: {} };
+    const assignedSheets = new Set();
+    
+    // First: auto-categorize
+    const cat = categorize(sheets);
+    const autoAssigned = new Set();
+    Object.entries(cat).forEach(([catName, rows]) => {
+      // Find which sheet(s) contributed to this category
+      Object.entries(sheets).forEach(([sn, sr]) => {
+        if (sr === rows || (sr.length > 0 && rows.length > 0 && sr[0] === rows[0])) autoAssigned.add(sn);
+      });
+    });
+    if (cat.financier) { result.financier_n = cat.financier; }
+    if (cat.operationnel) { result.operationnel_n = cat.operationnel; }
+    if (cat.rh) { result.rh = cat.rh; }
+    if (cat.gouvernance) { result.gouvernance = cat.gouvernance; }
+    
+    // Second: apply manual assignments (override auto)
+    Object.entries(assignments).forEach(([sheetName, vision]) => {
+      if (vision && vision !== "auto" && vision !== "" && sheets[sheetName]) {
+        assignedSheets.add(sheetName);
+        if (vision === "autre") {
+          result.autre[sheetName] = sheets[sheetName];
+        } else {
+          const key = vision === "rh" ? "rh" : vision === "gouvernance" ? "gouvernance" : vision + "_n";
+          result[key] = sheets[sheetName];
+        }
+      } else if (vision === "auto") {
+        assignedSheets.add(sheetName);
+      }
+    });
+    
+    // Collect uncategorized sheets into "autre"
+    Object.entries(sheets).forEach(([sn, rows]) => {
+      if (!assignedSheets.has(sn) && !autoAssigned.has(sn) && rows.length > 0) {
+        result.autre[sn] = rows;
+      }
+    });
+    
+    // Fill with demo if demoMode active
+    if (demoMode) {
+      const demo = generateDemoData();
+      if (!result.financier_n) result.financier_n = demo.financier_n;
+      if (!result.financier_n1) result.financier_n1 = demo.financier_n1;
+      if (!result.operationnel_n) result.operationnel_n = demo.operationnel_n;
+      if (!result.operationnel_n1) result.operationnel_n1 = demo.operationnel_n1;
+      if (!result.rh) result.rh = demo.rh;
+      if (!result.gouvernance) result.gouvernance = demo.gouvernance;
+    }
+    
+    return result;
+  }, [demoMode]);
+
+  const handleFileImport = useCallback(async (e) => {
+    const fileList = Array.from(e.target.files || []);
+    if (!fileList.length) return;
+    setImportStatus("loading");
+    try {
+      const { sheets, fileInfos } = await parseAllFiles(fileList);
+      const merged = { ...rawSheets, ...sheets };
+      setRawSheets(merged);
+      setData(buildDataFromSheets(merged, sheetAssign));
+      setFiles(prev => [...prev, ...fileInfos]);
+      setImportStatus("done");
+      // Show import panel if sheets found
+      if (Object.keys(sheets).length > 0) {
+        setShowImportPanel(true);
+      }
+      setTimeout(() => setImportStatus(null), 2000);
+    } catch (err) {
+      console.error("Import error:", err);
+      setImportStatus("error");
+      setTimeout(() => setImportStatus(null), 3000);
+    }
+    if (e.target) e.target.value = "";
+  }, [demoMode, rawSheets, sheetAssign, buildDataFromSheets]);
+
+  const handleSheetAssign = (sheetName, vision) => {
+    const newAssign = { ...sheetAssign, [sheetName]: vision };
+    setSheetAssign(newAssign);
+    setData(buildDataFromSheets(rawSheets, newAssign));
+  };
+
+  const deleteImportedSheet = (sheetName) => {
+    const newSheets = { ...rawSheets };
+    delete newSheets[sheetName];
+    const newAssign = { ...sheetAssign };
+    delete newAssign[sheetName];
+    setRawSheets(newSheets);
+    setSheetAssign(newAssign);
+    setData(buildDataFromSheets(newSheets, newAssign));
+    if (Object.keys(newSheets).length === 0) {
+      setFiles([]);
+      if (!demoMode) setData(null);
+    }
+  };
+
+  const deleteAllImported = () => {
+    setRawSheets({});
+    setSheetAssign({});
+    setFiles([]);
+    setShowImportPanel(false);
+    if (demoMode) {
+      setData(generateDemoData());
+    } else {
+      setData(null);
+    }
+  };
+
+  const toggleDemoMode = () => {
+    const next = !demoMode;
+    setDemoMode(next);
+    if (next && Object.keys(rawSheets).length === 0) {
+      setData(generateDemoData());
+      setFiles([{name: "demo_bu_it.xlsx", sheets: 6}]);
+    }
+  };
+
+  // Rebuild data when demoMode changes and sheets exist
+  useEffect(() => {
+    if (Object.keys(rawSheets).length > 0) {
+      setData(buildDataFromSheets(rawSheets, sheetAssign));
+    }
+  }, [demoMode]);
+
+  // ── Initialize database + preload SheetJS on app startup ──
+  useEffect(() => {
+    (async () => {
+      await loadFirebase();
+      await initDefaultUsers();
+      setDbReady(true);
+    })();
+  }, []);
+
+  // Set default vision based on user rights
+  useEffect(() => {
+    if (currentUser && !vision) {
+      setVision(currentUser.visions[0] || "financier");
+    }
+  }, [currentUser]);
+
+  const [allowedVisions, setAllowedVisions] = useState([]);
+
+  useEffect(() => {
+    if (!currentUser) { setAllowedVisions([]); return; }
+    getUsers().then(users => {
+      const fresh = users.find(u => u.id === currentUser.id);
+      setAllowedVisions(fresh ? fresh.visions : currentUser.visions);
+    });
+  }, [currentUser, showAdmin]);
+
+  const loadDemo = () => {
+    if (!demoMode) return;
+    setData(generateDemoData());
+    setFiles([{name:"demo_bu_it.xlsx",sheets:6}]);
+  };
+
+  const handlePasswordChange = async (newPw) => {
+    const updatedUser = { ...currentUser, password: newPw };
+    await saveUser(updatedUser);
+    setCurrentUser(updatedUser);
+  };
+
+  const handleLogout = () => { setCurrentUser(null); setData(null); setFiles([]); setVision(null); setShowAI(false); setUserMenuOpen(false); setDemoMode(true); };
+
+  const currentData = useMemo(() => {
+    if (!data) return null;
+    if (vision === "financier") return data.financier_n;
+    if (vision === "operationnel") return data.operationnel_n;
+    if (vision === "autre") {
+      // Flatten all autre sheets into one array for AI analysis
+      const all = [];
+      Object.values(data.autre || {}).forEach(rows => all.push(...rows));
+      return all.length > 0 ? all : null;
+    }
+    return data[vision];
+  }, [data, vision]);
+
+  const allTabs = [
+    { id: "financier", label: "Financière", icon: "💰" },
+    { id: "operationnel", label: "Opérationnelle", icon: "⚙️" },
+    { id: "rh", label: "RH", icon: "👥" },
+    { id: "gouvernance", label: "Gouvernance", icon: "🏛" },
+  ];
+  const hasAutre = data && data.autre && Object.keys(data.autre).length > 0;
+  const tabs = [...allTabs.filter(t => allowedVisions.includes(t.id)), ...(hasAutre ? [{ id: "autre", label: "Autre", icon: "📁" }] : [])];
+
+  // ── LOGIN ──
+  if (!currentUser) return <LoginPage onLogin={setCurrentUser} dbReady={dbReady} />;
+
+  const isAdmin = currentUser.role === "admin";
+  const roleLabels = { admin: "Administrateur", directeur: "Directeur", manager: "Manager", viewer: "Lecteur" };
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, fontFamily: font, color: C.text }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,600;0,9..40,700;0,9..40,800;0,9..40,900&family=IBM+Plex+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+
+      {/* ── HEADER ── */}
+      <header style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "12px 28px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 10, background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 900, color: C.bg }}>BU</div>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 17, fontWeight: 900, letterSpacing: -0.5 }}>Cockpit <span style={{ color: C.primary2 }}>Directeur BU</span></h1>
+            <p style={{ margin: 0, color: C.text3, fontSize: 10 }}>IT / Digital / Transformation</p>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", borderRadius: 6, background: C.bg, border: `1px solid ${C.border}` }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: getDBMode() === "firebase" ? C.accent : C.primary, boxShadow: `0 0 6px ${getDBMode() === "firebase" ? C.accent : C.primary}50` }} />
+            <span style={{ color: C.text3, fontSize: 9, fontWeight: 600 }}>{getDBMode() === "firebase" ? "Firebase" : "localStorage"}</span>
+          </div>
+          {files.length > 0 && <Badge color={C.accent}>● {files.length} fichier(s)</Badge>}
+          {Object.keys(rawSheets).length > 0 && (
+            <Btn variant="secondary" onClick={() => setShowImportPanel(true)} small>
+              📁 Fichiers ({Object.keys(rawSheets).length})
+            </Btn>
+          )}
+          {importStatus === "loading" && <Badge color={C.warn}>⏳ Import...</Badge>}
+          {importStatus === "done" && <Badge color={C.accent}>✅ Importé</Badge>}
+          {importStatus === "error" && <Badge color={C.danger}>❌ Erreur</Badge>}
+          <Btn onClick={() => fileInputRef.current?.click()} small>📂 Importer</Btn>
+          <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv,.tsv" multiple onChange={handleFileImport} style={{ display: "none" }} />
+          {demoMode && <Btn variant="secondary" onClick={loadDemo} small>Démo</Btn>}
+          {/* Demo toggle */}
+          <button onClick={toggleDemoMode} title={demoMode ? "Désactiver données démo" : "Activer données démo"} style={{
+            display: "flex", alignItems: "center", gap: 5, padding: "5px 12px", borderRadius: 8, cursor: "pointer",
+            background: demoMode ? C.accentDim : C.bg, border: `1px solid ${demoMode ? C.accent + "40" : C.border}`,
+            transition: "all 0.2s", fontSize: 11, fontWeight: 600, fontFamily: font,
+            color: demoMode ? C.accent : C.text3,
+          }}>
+            <span style={{ width: 28, height: 16, borderRadius: 8, background: demoMode ? C.accent : C.text3 + "40", position: "relative", display: "inline-block", transition: "background 0.2s" }}>
+              <span style={{ width: 12, height: 12, borderRadius: "50%", background: C.white, position: "absolute", top: 2, left: demoMode ? 14 : 2, transition: "left 0.2s" }} />
+            </span>
+            Démo
+          </button>
+          {data && <>
+            <Btn variant="success" onClick={() => exportExcel(data)} small>📥 Excel</Btn>
+            <Btn variant={showAI ? "danger" : "secondary"} onClick={() => setShowAI(!showAI)} small>🤖 {showAI ? "Fermer" : "IA"}</Btn>
+          </>}
+          <Btn variant="secondary" onClick={() => setShowDataEntry(true)} small>📝 Saisie</Btn>
+          {isAdmin && <Btn variant="secondary" onClick={() => setShowAdmin(true)} small>⚙️ Admin</Btn>}
+
+          {/* User menu */}
+          <div style={{ position: "relative" }}>
+            <button onClick={() => setUserMenuOpen(!userMenuOpen)} style={{
+              display: "flex", alignItems: "center", gap: 8, background: C.card, border: `1px solid ${C.border}`,
+              borderRadius: 10, padding: "7px 14px", cursor: "pointer", transition: "border-color 0.2s",
+            }} onMouseEnter={e => e.currentTarget.style.borderColor = C.primary} onMouseLeave={e => { if(!userMenuOpen) e.currentTarget.style.borderColor = C.border; }}>
+              <div style={{ width: 28, height: 28, borderRadius: 8, background: `linear-gradient(135deg, ${C.primary}40, ${C.accent}40)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: C.primary2 }}>{currentUser.nom.charAt(0)}</div>
+              <div style={{ textAlign: "left" }}>
+                <div style={{ color: C.text, fontSize: 11, fontWeight: 700, lineHeight: 1.2 }}>{currentUser.nom}</div>
+                <div style={{ color: C.text3, fontSize: 9 }}>{roleLabels[currentUser.role]}</div>
+              </div>
+              <span style={{ color: C.text3, fontSize: 10, transform: userMenuOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▼</span>
+            </button>
+            {userMenuOpen && (
+              <>
+                <div style={{ position: "fixed", inset: 0, zIndex: 999 }} onClick={() => setUserMenuOpen(false)} />
+                <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 6, minWidth: 200, zIndex: 1000, boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}>
+                  <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.border}` }}>
+                    <div style={{ color: C.text, fontSize: 13, fontWeight: 700 }}>{currentUser.nom}</div>
+                    <div style={{ color: C.text3, fontSize: 10, marginTop: 2 }}>{currentUser.email || currentUser.id}</div>
+                    <div style={{ marginTop: 6, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                      {allowedVisions.map(v => <Badge key={v} color={C.primary}>{VISION_LABELS[v]}</Badge>)}
+                    </div>
+                  </div>
+                  <button onClick={() => { setShowPwModal(true); setUserMenuOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", background: "none", border: "none", color: C.text2, fontSize: 12, cursor: "pointer", textAlign: "left", borderRadius: 6 }}
+                    onMouseEnter={e => e.currentTarget.style.background = C.bg} onMouseLeave={e => e.currentTarget.style.background = "none"}>
+                    🔑 Changer mot de passe
+                  </button>
+                  {isAdmin && <button onClick={() => { setShowAdmin(true); setUserMenuOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", background: "none", border: "none", color: C.text2, fontSize: 12, cursor: "pointer", textAlign: "left", borderRadius: 6 }}
+                    onMouseEnter={e => e.currentTarget.style.background = C.bg} onMouseLeave={e => e.currentTarget.style.background = "none"}>
+                    ⚙️ Administration
+                  </button>}
+                  <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 2 }}>
+                    <button onClick={handleLogout} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", background: "none", border: "none", color: C.danger, fontSize: 12, cursor: "pointer", textAlign: "left", borderRadius: 6 }}
+                      onMouseEnter={e => e.currentTarget.style.background = C.dangerDim} onMouseLeave={e => e.currentTarget.style.background = "none"}>
+                      🚪 Déconnexion
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </header>
+
+      {/* ── WELCOME ── */}
+      {!data && (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "75vh", gap: 28, padding: 40 }}>
+          <div style={{ width: 80, height: 80, borderRadius: 20, background: `linear-gradient(135deg, ${C.primary}20, ${C.accent}20)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 40 }}>📊</div>
+          <h2 style={{ fontSize: 28, fontWeight: 900, margin: 0, textAlign: "center" }}>Bienvenue, <span style={{ color: C.primary2 }}>{currentUser.nom}</span></h2>
+          <p style={{ color: C.text2, fontSize: 13, textAlign: "center", maxWidth: 560, lineHeight: 1.8 }}>
+            Vous avez accès à {allowedVisions.length} vision(s) : {allowedVisions.map(v => VISION_LABELS[v]).join(", ")}. Importez vos rapports pour commencer.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(tabs.length, 4)}, 1fr)`, gap: 14 }}>
+            {tabs.map(t => (
+              <div key={t.id} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: "22px 18px", textAlign: "center", width: 150 }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>{t.icon}</div>
+                <div style={{ color: C.text, fontSize: 13, fontWeight: 700 }}>{t.label}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8, width: "100%", maxWidth: 500 }}>
+            <Btn onClick={() => fileInputRef.current?.click()} style={{ width: "100%", padding: "16px", borderRadius: 12, fontSize: 15 }}>📂 Importer mes fichiers Excel / CSV</Btn>
+            {demoMode ? (
+              <Btn variant="secondary" onClick={loadDemo} style={{ width: "100%", padding: "14px", borderRadius: 10 }}>Tester avec données démo</Btn>
+            ) : (
+              <div style={{ textAlign: "center", padding: "10px 0", color: C.text3, fontSize: 12 }}>
+                Mode démo désactivé — seules les données importées seront utilisées
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── DASHBOARD ── */}
+      {data && (
+        <div style={{ padding: "18px 28px", marginRight: showAI ? 520 : 0, transition: "margin 0.3s" }}>
+          {tabs.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 60, color: C.text3 }}>
+              <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
+              <p style={{ fontSize: 16, fontWeight: 700, color: C.text2 }}>Aucun dashboard autorisé</p>
+              <p style={{ fontSize: 13 }}>Contactez l'administrateur pour obtenir des droits d'accès.</p>
+            </div>
+          ) : <>
+            <div style={{ display: "flex", gap: 8, marginBottom: 20, alignItems: "center", flexWrap: "wrap" }}>
+              {tabs.map(t => (
+                <button key={t.id} onClick={() => setVision(t.id)} style={{
+                  background: vision===t.id ? `linear-gradient(135deg, ${C.primary}, ${C.accent})` : "transparent",
+                  color: vision===t.id ? C.bg : C.text2,
+                  border: vision===t.id ? "none" : `1px solid ${C.border}`,
+                  borderRadius: 8, padding: "9px 20px", cursor: "pointer",
+                  fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 6, transition: "all 0.2s",
+                }}><span style={{ fontSize: 15 }}>{t.icon}</span> {t.label}</button>
+              ))}
+              {Object.keys(rawSheets).length > 0 && (
+                <button onClick={() => setShowImportPanel(true)} style={{
+                  marginLeft: "auto", background: C.bg, border: `1px solid ${C.border}`,
+                  borderRadius: 8, padding: "8px 16px", cursor: "pointer",
+                  fontSize: 11, fontWeight: 600, color: C.text2, display: "flex", alignItems: "center", gap: 6,
+                  fontFamily: font, transition: "all 0.2s",
+                }} onMouseEnter={e => e.currentTarget.style.borderColor = C.primary} onMouseLeave={e => e.currentTarget.style.borderColor = C.border}>
+                  📁 Gérer fichiers <span style={{ background: C.primaryDim, color: C.primary2, padding: "2px 7px", borderRadius: 5, fontSize: 10, fontWeight: 800 }}>{Object.keys(rawSheets).length}</span>
+                </button>
+              )}
+            </div>
+            {vision === "financier" && allowedVisions.includes("financier") && <FinancierView dataN={data.financier_n} dataN1={data.financier_n1} />}
+            {vision === "operationnel" && allowedVisions.includes("operationnel") && <OperationnelView dataN={data.operationnel_n} dataN1={data.operationnel_n1} />}
+            {vision === "rh" && allowedVisions.includes("rh") && <RHView data={data.rh} />}
+            {vision === "gouvernance" && allowedVisions.includes("gouvernance") && <GouvernanceView data={data.gouvernance} />}
+            {vision === "autre" && hasAutre && <AutreView data={currentData} sheetsMap={data.autre} />}
+            {vision !== "autre" && !allowedVisions.includes(vision) && <div style={{textAlign:"center",padding:40,color:C.warn}}>🔒 Accès non autorisé à cette vision</div>}
+          </>}
+        </div>
+      )}
+
+      {/* ── PANELS & MODALS ── */}
+      {showAI && data && <AIPanel data={currentData} vision={allTabs.find(t=>t.id===vision)?.label} onClose={()=>setShowAI(false)} />}
+      {showPwModal && <PasswordModal user={currentUser} onClose={() => setShowPwModal(false)} onSave={handlePasswordChange} />}
+      {showAdmin && <AdminPanel currentUser={currentUser} onClose={() => setShowAdmin(false)} onUsersChange={(u) => { const me = u.find(x=>x.id===currentUser.id); if(me) setCurrentUser(me); }} />}
+      {showDataEntry && <DataEntryPanel currentUser={currentUser} onClose={() => setShowDataEntry(false)} />}
+
+      {/* ── IMPORT PANEL ── */}
+      {showImportPanel && Object.keys(rawSheets).length > 0 && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000 }} onClick={() => setShowImportPanel(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 20, width: 720, maxHeight: "85vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
+            <div style={{ padding: "20px 28px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+              <div>
+                <h2 style={{ color: C.text, fontSize: 17, fontWeight: 900, margin: 0 }}>📂 Gestion des fichiers importés</h2>
+                <p style={{ color: C.text3, fontSize: 11, margin: "4px 0 0" }}>Visualiser, catégoriser ou supprimer vos données</p>
+              </div>
+              <button onClick={() => setShowImportPanel(false)} style={{ background: "none", border: "none", color: C.text3, fontSize: 22, cursor: "pointer" }}>✕</button>
+            </div>
+
+            {/* Summary badges */}
+            <div style={{ padding: "14px 28px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 10, flexWrap: "wrap", flexShrink: 0 }}>
+              <Badge color={C.primary}>{Object.keys(rawSheets).length} feuille(s)</Badge>
+              <Badge color={C.accent}>{Object.values(rawSheets).reduce((s, r) => s + r.length, 0)} lignes total</Badge>
+              {(() => {
+                const assigned = Object.values(sheetAssign).filter(v => v && v !== "" && v !== "auto").length;
+                const auto = Object.values(sheetAssign).filter(v => v === "auto").length + Object.keys(rawSheets).filter(n => !sheetAssign[n] && categorize({ [n]: rawSheets[n] }) && Object.keys(categorize({ [n]: rawSheets[n] })).length > 0).length;
+                const unassigned = Object.keys(rawSheets).length - assigned - auto;
+                return <>
+                  {assigned > 0 && <Badge color={C.accent}>{assigned} assigné(s)</Badge>}
+                  {auto > 0 && <Badge color={C.primary}>{auto} auto-détecté(s)</Badge>}
+                  {unassigned > 0 && <Badge color={C.warn}>{unassigned} non classé(s)</Badge>}
+                </>;
+              })()}
+            </div>
+
+            <div style={{ padding: "16px 28px", flex: 1, overflowY: "auto" }}>
+              {Object.entries(rawSheets).map(([name, rows]) => {
+                const cols = rows.length > 0 ? Object.keys(rows[0]) : [];
+                const autoVision = (() => {
+                  const txt = (name + " " + cols.join(" ")).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+                  const kw = { financier: ["ca", "chiffre", "revenue", "budget", "marge", "charge", "tresorerie", "invest", "cout", "montant", "ebitda", "backlog", "dso"], operationnel: ["projet", "livraison", "sla", "incident", "satisfaction", "client", "taux", "occupation", "tjm", "ticket", "dette"], rh: ["effectif", "employe", "turnover", "formation", "absenteisme", "salaire", "departement", "certification"], gouvernance: ["conformite", "risque", "audit", "rgpd", "securite", "gouvernance", "action", "score", "rse", "pca"] };
+                  let best = null, bs = 0;
+                  Object.entries(kw).forEach(([cat, words]) => { const sc = words.filter(w => txt.includes(w)).length; if (sc > bs) { best = cat; bs = sc; } });
+                  return best;
+                })();
+                const assigned = sheetAssign[name] || (autoVision ? "auto" : "");
+
+                return (
+                  <div key={name} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: "16px 20px", marginBottom: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <div>
+                        <div style={{ color: C.text, fontSize: 14, fontWeight: 700 }}>{name}</div>
+                        <div style={{ color: C.text3, fontSize: 11, marginTop: 2 }}>{rows.length} lignes · {cols.length} colonnes</div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <select
+                          value={assigned}
+                          onChange={e => handleSheetAssign(name, e.target.value)}
+                          style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", color: C.text, fontSize: 12, outline: "none", fontFamily: font, minWidth: 180 }}
+                        >
+                          <option value="">— Non assigné —</option>
+                          <option value="auto">🔄 Auto-détecté{autoVision ? ` (${VISION_LABELS[autoVision]})` : ""}</option>
+                          <option value="financier">💰 Financière</option>
+                          <option value="operationnel">⚙️ Opérationnelle</option>
+                          <option value="rh">👥 RH</option>
+                          <option value="gouvernance">🏛 Gouvernance</option>
+                          <option value="autre">📁 Autre</option>
+                        </select>
+                        <Btn variant="danger" small onClick={() => deleteImportedSheet(name)}>🗑</Btn>
+                      </div>
+                    </div>
+                    <div style={{ color: C.text3, fontSize: 10, marginBottom: 6 }}>Colonnes : {cols.slice(0, 8).join(" · ")}{cols.length > 8 ? ` (+${cols.length - 8})` : ""}</div>
+                    {rows.length > 0 && (
+                      <div style={{ overflowX: "auto", maxHeight: 120 }}>
+                        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 400 }}>
+                          <thead>
+                            <tr>{cols.slice(0, 6).map(c => <th key={c} style={{ padding: "4px 8px", textAlign: "left", color: C.primary2, fontSize: 9, fontWeight: 700, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{c}</th>)}</tr>
+                          </thead>
+                          <tbody>
+                            {rows.slice(0, 3).map((row, i) => (
+                              <tr key={i}>{cols.slice(0, 6).map(c => <td key={c} style={{ padding: "3px 8px", color: C.text, fontSize: 10, fontFamily: mono, borderBottom: `1px solid ${C.border}11`, whiteSpace: "nowrap" }}>{String(row[c] ?? "").slice(0, 30)}</td>)}</tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
+                <Btn variant="danger" small onClick={deleteAllImported}>🗑 Supprimer tout</Btn>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Btn variant="secondary" onClick={() => setShowImportPanel(false)}>Fermer</Btn>
+                  <Btn onClick={() => { setData(buildDataFromSheets(rawSheets, sheetAssign)); setShowImportPanel(false); }}>✓ Appliquer</Btn>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+  </script>
+</body>
+</html>
