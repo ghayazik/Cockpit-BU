@@ -57,6 +57,12 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
 
   <script>
+    // Ensure Recharts is available globally
+    if (!window.Recharts && typeof Recharts === 'undefined') {
+      // Try to find it on window
+      var rc = window.Recharts || window.recharts;
+      if (rc) window.Recharts = rc;
+    }
     document.getElementById('loading-text').textContent = 'Compilation de l\'application...';
     window.onerror = function(msg, url, line) {
       var el = document.getElementById('loading-screen');
@@ -66,7 +72,9 @@
 
   <script type="text/babel">
     const { useState, useCallback, useRef, useEffect, useMemo } = React;
-    const { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ComposedChart, ReferenceLine } = Recharts;
+    // Recharts CDN exposes all components on window.Recharts
+    const _RC = window.Recharts || {};
+    const { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ComposedChart, ReferenceLine } = _RC;
 
 async function parseFileToSheets(file) {
   const name = file.name.toLowerCase();
