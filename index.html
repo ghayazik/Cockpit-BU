@@ -14,33 +14,71 @@
     ::-webkit-scrollbar-thumb:hover { background: #0ea5e9; }
     input::placeholder, textarea::placeholder { color: #4a5a74; }
     select option { background: #0c1220; color: #e8edf5; }
-    #loading-screen { position: fixed; inset: 0; background: #05080f; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: 'DM Sans', system-ui, sans-serif; z-index: 9999; }
+    #loading-screen { position: fixed; inset: 0; background: #05080f; display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: 'DM Sans', system-ui, sans-serif; z-index: 9999; transition: opacity 0.3s; }
     #loading-screen .logo { width: 64px; height: 64px; border-radius: 18px; background: linear-gradient(135deg, #0ea5e9, #06d6a0); display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 900; color: #05080f; margin-bottom: 20px; animation: pulse 1.5s ease-in-out infinite; }
     #loading-screen p { color: #7b8ba5; font-size: 13px; }
+    #loading-screen .err { color: #f43f5e; font-size: 12px; max-width: 500px; text-align: center; margin-top: 10px; word-break: break-word; }
     @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
   </style>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;600;700;800;900&family=IBM+Plex+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
-  <div id="loading-screen"><div class="logo">BU</div><p id="loading-text">Chargement...</p></div>
+  <div id="loading-screen">
+    <div class="logo">BU</div>
+    <p id="loading-text">Chargement des bibliothèques...</p>
+  </div>
   <div id="root"></div>
+
   <script>
     window.__FIREBASE_CONFIG__ = { apiKey: "VOTRE_API_KEY", authDomain: "VOTRE_PROJET.firebaseapp.com", projectId: "VOTRE_PROJECT_ID", storageBucket: "VOTRE_PROJET.appspot.com", messagingSenderId: "VOTRE_SENDER_ID", appId: "VOTRE_APP_ID" };
   </script>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+
   <script>
-    document.getElementById('loading-text').textContent = 'Compilation...';
-    window.onerror = function(msg, url, line) { var el = document.getElementById('loading-screen'); if (el) el.innerHTML = '<div class="logo">BU</div><p style="color:#f43f5e">Erreur</p><div style="color:#7b8ba5;font-size:12px;max-width:400px;text-align:center;margin-top:8px">' + msg + ' (L' + line + ')</div>'; };
+    // Load Babel and compile JSX asynchronously
+    document.getElementById('loading-text').textContent = 'Chargement du compilateur...';
+    
+    var babelScript = document.createElement('script');
+    babelScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js';
+    babelScript.onload = function() {
+      document.getElementById('loading-text').textContent = 'Compilation de l\'application...';
+      
+      // Use setTimeout to let the UI update before heavy compilation
+      setTimeout(function() {
+        try {
+          var jsxCode = document.getElementById('app-jsx').textContent;
+          var compiled = Babel.transform(jsxCode, { presets: ['react'] }).code;
+          
+          document.getElementById('loading-text').textContent = 'Démarrage...';
+          
+          // Execute compiled code
+          var scriptEl = document.createElement('script');
+          scriptEl.textContent = compiled;
+          document.body.appendChild(scriptEl);
+          
+        } catch(err) {
+          var el = document.getElementById('loading-screen');
+          el.innerHTML = '<div class="logo">BU</div><p style="color:#f43f5e;font-weight:700">Erreur de compilation</p><div class="err">' + err.message + '</div><p style="margin-top:16px;color:#7b8ba5;font-size:11px">Rechargez la page (Ctrl+F5)</p>';
+          console.error('Babel compilation error:', err);
+        }
+      }, 100);
+    };
+    babelScript.onerror = function() {
+      document.getElementById('loading-screen').innerHTML = '<div class="logo">BU</div><p style="color:#f43f5e">Impossible de charger le compilateur</p><p style="color:#7b8ba5;font-size:11px;margin-top:8px">Vérifiez votre connexion internet et rechargez.</p>';
+    };
+    document.head.appendChild(babelScript);
   </script>
-  <script type="text/babel">
-    const { useState, useCallback, useRef, useEffect, useMemo } = React;
-    const _RC = window.Recharts || {};
-    const { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ComposedChart, ReferenceLine } = _RC;
+
+  <!-- JSX source code stored as text, NOT executed by browser directly -->
+  <script type="text/plain" id="app-jsx">
+const { useState, useCallback, useRef, useEffect, useMemo } = React;
+const _RC = window.Recharts || {};
+const { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ComposedChart, ReferenceLine } = _RC;
 
 async function parseFileToSheets(file) {
   const name = file.name.toLowerCase();
@@ -2265,8 +2303,10 @@ function App() {
 }
 
 
-    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
-    document.getElementById("loading-screen").style.display = "none";
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+var ls = document.getElementById("loading-screen");
+if (ls) ls.style.display = "none";
+
   </script>
 </body>
 </html>

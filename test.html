@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Import — Diagnostic Netlify</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #05080f; color: #e8edf5; font-family: monospace; padding: 30px; }
+    h2 { color: #38bdf8; margin-bottom: 20px; }
+    .test { background: #111827; border: 1px solid #1c2d45; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+    .test label { color: #94a3b8; font-size: 12px; display: block; margin-bottom: 8px; }
+    input[type=file] { color: #e8edf5; }
+    #log { background: #111827; border: 1px solid #1c2d45; border-radius: 10px; padding: 16px; margin-top: 20px; max-height: 500px; overflow-y: auto; }
+    .log-entry { padding: 3px 0; font-size: 12px; border-bottom: 1px solid #1c2d4522; }
+    .ok { color: #06d6a0; }
+    .err { color: #f43f5e; }
+    .warn { color: #f59e0b; }
+    .info { color: #94a3b8; }
+    button { padding: 8px 16px; background: #1c2d45; color: #e8edf5; border: none; border-radius: 6px; cursor: pointer; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h2>🔬 Test Import Fichier — Diagnostic Netlify</h2>
+  
+  <div class="test">
+    <label>Sélectionnez un fichier Excel (.xlsx) ou CSV (.csv) :</label>
+    <input type="file" accept=".xlsx,.xls,.csv,.tsv" id="fileInput">
+  </div>
+
+  <div id="log"></div>
+  <button onclick="document.getElementById('log').innerHTML=''">Vider le log</button>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script>
+    function log(msg, type) {
+      var el = document.getElementById('log');
+      var div = document.createElement('div');
+      div.className = 'log-entry ' + (type || 'info');
+      div.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+      el.appendChild(div);
+      el.scrollTop = el.scrollHeight;
+    }
+
+    document.getElementById('fileInput').addEventListener('change', async function(e) {
+      var file = e.target.files[0];
+      if (!file) { log('Aucun fichier', 'warn'); return; }
+      
+      log('=== DÉBUT TEST: ' + file.name + ' ===', 'ok');
+      log('Taille: ' + file.size + ' bytes, Type: ' + file.type);
+
+      // Test 1: Read as ArrayBuffer
+      try {
+        log('Test 1: ArrayBuffer...');
+        var ab = await file.arrayBuffer();
+        log('✅ ArrayBuffer OK: ' + ab.byteLength + ' bytes', 'ok');
+        
+        var bytes = new Uint8Array(ab.slice(0, 4));
+        var hex = Array.from(bytes).map(function(b) { return b.toString(16).padStart(2, '0'); }).join(' ');
+        log('Header: ' + hex + (bytes[0] === 0x50 && bytes[1] === 0x4B ? ' (ZIP/XLSX)' : ' (pas ZIP)'));
+      } catch(err) {
+        log('❌ ArrayBuffer ERREUR: ' + err.message, 'err');
+      }
+
+      // Test 2: Read as Text
+      try {
+        log('Test 2: Text...');
+        var text = await file.text();
+        log('✅ Text OK: ' + text.length + ' chars. Début: ' + text.slice(0, 100), 'ok');
+      } catch(err) {
+        log('❌ Text ERREUR: ' + err.message, 'err');
+      }
+
+      // Test 3: Papaparse CSV
+      try {
+        log('Test 3: Papaparse...');
+        var text2 = await file.text();
+        Papa.parse(text2, {
+          header: true,
+          skipEmptyLines: true,
+          dynamicTyping: true,
+          complete: function(results) {
+            if (results.data && results.data.length > 0) {
+              log('✅ Papaparse OK: ' + results.data.length + ' lignes, colonnes: ' + Object.keys(results.data[0]).join(', '), 'ok');
+              log('Première ligne: ' + JSON.stringify(results.data[0]).slice(0, 200));
+            } else {
+              log('⚠ Papaparse: 0 lignes (normal si .xlsx)', 'warn');
+            }
+          },
+          error: function(err) {
+            log('❌ Papaparse ERREUR: ' + err.message, 'err');
+          }
+        });
+      } catch(err) {
+        log('❌ Papaparse ERREUR: ' + err.message, 'err');
+      }
+
+      // Test 4: JSZip (pour XLSX)
+      if (bytes && bytes[0] === 0x50 && bytes[1] === 0x4B) {
+        try {
+          log('Test 4: Chargement JSZip CDN...');
+          if (!window.JSZip) {
+            await new Promise(function(resolve, reject) {
+              var s = document.createElement('script');
+              s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+              s.onload = resolve;
+              s.onerror = function() { reject(new Error('JSZip CDN failed')); };
+              document.head.appendChild(s);
+            });
+          }
+          log('✅ JSZip chargé', 'ok');
+          
+          log('Test 4b: Décompression ZIP...');
+          var zip = await JSZip.loadAsync(ab);
+          var fileNames = Object.keys(zip.files);
+          log('✅ ZIP OK: ' + fileNames.length + ' fichiers: ' + fileNames.slice(0, 10).join(', '), 'ok');
+          
+          // Try to read shared strings
+          var ssFile = zip.file('xl/sharedStrings.xml');
+          if (ssFile) {
+            var ssText = await ssFile.async('text');
+            log('✅ sharedStrings.xml: ' + ssText.length + ' chars', 'ok');
+          } else {
+            log('⚠ Pas de sharedStrings.xml', 'warn');
+          }
+          
+          // Try to read workbook
+          var wbFile = zip.file('xl/workbook.xml');
+          if (wbFile) {
+            var wbText = await wbFile.async('text');
+            log('✅ workbook.xml: ' + wbText.length + ' chars', 'ok');
+            // Extract sheet names
+            var matches = wbText.match(/name="([^"]*)"/g);
+            if (matches) log('Feuilles: ' + matches.join(', '), 'ok');
+          }
+          
+          // Try to read sheet1
+          var s1File = zip.file('xl/worksheets/sheet1.xml');
+          if (s1File) {
+            var s1Text = await s1File.async('text');
+            log('✅ sheet1.xml: ' + s1Text.length + ' chars', 'ok');
+            log('Début sheet1: ' + s1Text.slice(0, 200));
+          }
+          
+        } catch(err) {
+          log('❌ JSZip ERREUR: ' + err.message, 'err');
+          log('Stack: ' + err.stack, 'err');
+        }
+      }
+
+      log('=== FIN TEST ===', 'ok');
+    });
+  </script>
+</body>
+</html>
