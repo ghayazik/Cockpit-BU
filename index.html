@@ -14,17 +14,28 @@
     ::-webkit-scrollbar-thumb:hover { background: #0ea5e9; }
     input::placeholder, textarea::placeholder { color: #4a5a74; }
     select option { background: #0c1220; color: #e8edf5; }
+    #loading-screen {
+      position: fixed; inset: 0; background: #05080f;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      font-family: 'DM Sans', system-ui, sans-serif; z-index: 9999;
+    }
+    #loading-screen .logo { width: 64px; height: 64px; border-radius: 18px;
+      background: linear-gradient(135deg, #0ea5e9, #06d6a0);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 26px; font-weight: 900; color: #05080f; margin-bottom: 20px;
+      animation: pulse 1.5s ease-in-out infinite; }
+    #loading-screen p { color: #7b8ba5; font-size: 13px; }
+    #loading-screen .err { color: #f43f5e; margin-top: 12px; font-size: 12px; max-width: 400px; text-align: center; }
+    @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
   </style>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;600;700;800;900&family=IBM+Plex+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
+  <div id="loading-screen">
+    <div class="logo">BU</div>
+    <p id="loading-text">Chargement de l'application...</p>
+  </div>
   <div id="root"></div>
-
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 
   <!-- FIREBASE CONFIG — Remplacez avec vos identifiants Firebase -->
   <script>
@@ -38,7 +49,22 @@
     };
   </script>
 
-  <script type="text/babel" data-type="module">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+
+  <script>
+    document.getElementById('loading-text').textContent = 'Compilation de l\'application...';
+    window.onerror = function(msg, url, line) {
+      var el = document.getElementById('loading-screen');
+      if (el) { el.innerHTML = '<div class="logo">BU</div><p style="color:#f43f5e">Erreur de chargement</p><div class="err">' + msg + ' (ligne ' + line + ')</div><p style="margin-top:16px;color:#7b8ba5;font-size:11px">Rechargez la page ou vérifiez la console.</p>'; }
+    };
+  </script>
+
+  <script type="text/babel">
     const { useState, useCallback, useRef, useEffect, useMemo } = React;
     const { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ComposedChart, ReferenceLine } = Recharts;
 
@@ -1921,6 +1947,7 @@ function App() {
 
 
     ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+    document.getElementById("loading-screen").style.display = "none";
   </script>
 </body>
 </html>
